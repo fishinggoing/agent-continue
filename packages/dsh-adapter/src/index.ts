@@ -25,3 +25,16 @@ export {
   type ArtifactLocation,
   type JsonlCompression,
 } from './paths.ts'
+
+export {
+  KNOWN_SESSION_EVENT_TYPES,
+  SURFACE_EVENT_TYPES,
+  SessionLogError,
+  parseEvent,
+  parseHeader,
+  parseSessionLog,
+  serializeSessionLog,
+  type SessionEvent,
+  type SessionHeader,
+  type SurfaceOp,
+} from './format.ts'
