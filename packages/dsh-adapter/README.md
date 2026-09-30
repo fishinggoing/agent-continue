@@ -23,7 +23,31 @@ node --test "tests/**/*.test.ts"
 | 路径 | 作用 |
 |---|---|
 | `src/zstd.ts` | 拼接式 zstd 帧容器：结构化定位帧边界、逐帧解压、按帧写入 |
-| `tests/zstd.test.ts` | 帧容器自洽测试 + 对真实 DSH artifact 的解码测试 |
+| `src/paths.ts` | 路径推导：`encodeSegment`、`projectKey`、`artifactPath` |
+| `src/format.ts` | v4 行编解码与准入规则，含已知事件类型清单 |
+| `src/write.ts` | 编码并落盘一个会话产物 |
+| `tests/acp.ts` | 最小 ACP 客户端，用于驱动真实 DSH |
+| `tests/corpus.ts` | 真实会话库的共享读取 |
+| `tests/*.test.ts` | 单元 + 真实语料 + 端到端验收 |
+
+## 测试
+
+```
+node --test "tests/**/*.test.ts"
+```
+
+端到端那条会启动真实 DSH、往隔离的 harness home 里写文件，默认跳过。
+打开它需要四个环境变量：
+
+```powershell
+$env:DSH_CLI='F:\dsh\app\resources\runtime\cli\bin\dsh.cmd'
+$env:DSH_PROBE_HOME='F:\agent-continue\.agent-continue\probe\dsh-home'
+$env:DSH_PROBE_PROFILE='probe-acp'
+$env:DSH_PROBE_CWD='F:\agent-continue'
+```
+
+`DSH_PROBE_HOME` 必须是一个已用 `dsh <name> --from-default-profile acp` 初始化过的
+探针 home，且与真实 `~/.dsh` 隔离。
 
 ## 已实测的格式事实
 
@@ -31,5 +55,9 @@ node --test "tests/**/*.test.ts"
   之后每个 durable batch 一帧。Node 的一次性 zstd API 只解一帧，
   所以必须先结构化定位边界（`createZstdDecompress` 遇到拼接帧会直接报
   `Unknown frame descriptor`）。
-- 真实语料（17 个 artifact、10547 条事件记录）：`seq` 全部等于 0 基索引，
-  **零例外**。
+- 真实语料（17 个 artifact、10700+ 条记录）：`seq` 全部等于 0 基索引，**零例外**。
+- 事件信封在 v3 与 v4 之间**没有差异**，只有 header 键集不同。
+- 我们由 header 反推出的路径与磁盘实际路径**逐个一致**（等价于 DSH 的
+  `assertStoredIdentity` 校验）。
+- 端到端：手写产物能被真实 DSH `session/list` 列出并 `session/resume` 打开。
+
