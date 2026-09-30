@@ -7,7 +7,13 @@
  */
 export {
   convertCodexToDsh,
-  type ConversionResult,
-  type ConvertOptions,
+  type ConversionResult as CodexToDshResult,
+  type ConvertOptions as CodexToDshOptions,
   type MappingTally,
 } from './codex-to-dsh.ts'
+
+export {
+  convertDshToCodex,
+  type ConversionResult as DshToCodexResult,
+  type ConvertOptions as DshToCodexOptions,
+} from './dsh-to-codex.ts'
