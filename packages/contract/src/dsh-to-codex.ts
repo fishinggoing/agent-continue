@@ -97,6 +97,9 @@ export function convertDshToCodex(
   const modelSource = firstModelSource(events)
   const provider = options.modelProvider ?? modelSource?.provider ?? 'unknown'
   const model = modelSource?.model ?? 'unknown'
+  // Needed inside the loop for `item_completed.thread_id`, and at the end for
+  // `session_meta.id`: both must equal the registered thread id.
+  const threadId = options.threadId ?? header.id
 
   let turn: TurnState | undefined
   /** Call ids seen from `tool/call`, so a later result can be paired. */
@@ -176,12 +179,13 @@ export function convertDshToCodex(
         }, iso(atMs))
         push('event_msg', {
           type: 'item_completed',
+          thread_id: threadId,
           turn_id: turn.turnId,
           item: {
             type: 'UserMessage',
             id: `item_${String(data.id ?? randomUUID())}`,
             client_id: null,
-            content: content.blocks,
+            content: userItemContent(content.blocks),
           },
           started_at_ms: atMs,
           completed_at_ms: atMs,
@@ -206,12 +210,13 @@ export function convertDshToCodex(
         }, iso(atMs))
         push('event_msg', {
           type: 'item_completed',
+          thread_id: threadId,
           turn_id: turn.turnId,
           item: {
             type: 'AgentMessage',
             id: `item_${String(message.id ?? randomUUID())}`,
             client_id: null,
-            content: content.blocks,
+            content: agentItemContent(content.blocks),
           },
           started_at_ms: atMs,
           completed_at_ms: atMs,
@@ -274,9 +279,10 @@ export function convertDshToCodex(
   }
   closeTurn(events.length === 0 ? header.createdAt : (events[events.length - 1]!.time ?? header.createdAt))
 
-  // `session_meta` must be the first record, and its `id` must equal the id the
-  // registry row uses.
-  const threadId = options.threadId ?? header.id
+  // `session_meta` must be the first record, its `id` must equal the id the
+  // registry row uses, and its `history_mode` must match that row. Codex refuses
+  // to build paginated history when the two disagree, which leaves a thread that
+  // resumes without error but has no readable history.
   const meta: RolloutDraft = {
     type: 'session_meta',
     timestamp: iso(header.createdAt),
@@ -291,12 +297,43 @@ export function convertDshToCodex(
       source: 'exec',
       thread_source: 'user',
       model_provider: provider,
+      history_mode: HISTORY_MODE,
     },
   }
   drafts.unshift(meta)
   tally('session_meta', 'mapped')
 
   return { drafts, tallies, losses: describeLosses(tallies) }
+}
+
+/** History mode of every thread observed in a current Codex store. */
+const HISTORY_MODE = 'paginated'
+
+/**
+ * Content encoding for a `UserMessage` projection item.
+ *
+ * Codex encodes `item_completed` items differently from `response_item/message`:
+ * these are **not** interchangeable, and reusing one for the other is why
+ * migrated threads showed up with empty history. Measured against a control
+ * rollout written by the real binary.
+ * @param blocks - Codex `input_text` blocks produced for the message record.
+ * @returns `UserMessage` content blocks.
+ */
+function userItemContent(blocks: readonly JsonObject[]): JsonObject[] {
+  return blocks.map((block) => ({ type: 'text', text: block.text, text_elements: [] }))
+}
+
+/**
+ * Content encoding for an `AgentMessage` projection item.
+ *
+ * The block type is capitalised `Text` here, unlike `response_item`'s
+ * `output_text`. That asymmetry is Codex's, and was read off a rollout the real
+ * binary wrote.
+ * @param blocks - Codex `output_text` blocks produced for the message record.
+ * @returns `AgentMessage` content blocks.
+ */
+function agentItemContent(blocks: readonly JsonObject[]): JsonObject[] {
+  return blocks.map((block) => ({ type: 'Text', text: block.text }))
 }
 
 /** Provider and model recorded on the first assistant message. */

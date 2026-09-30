@@ -1,4 +1,4 @@
-﻿/**
+/**
  * End-to-end acceptance: a thread this package writes must be resumed by the
  * real Codex CLI.
  *

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Real migration: a DSH session becomes a Codex thread that Codex itself resumes.
  *
  * The conversion half runs anywhere. The acceptance half writes into an isolated
@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { findArtifacts, readArtifact, sessionRoot } from '../../dsh-adapter/tests/corpus.ts'
 import { registerThread, seedProjectionCursor, writeRollout } from '../../codex-adapter/src/write.ts'
@@ -107,4 +108,27 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
   const after = statSync(written.path).size
   t.diagnostic(`rollout grew ${before} -> ${after} bytes`)
   assert.ok(after > before, 'Codex appended to the migrated rollout')
+
+  // File growth only proves the thread was resumed. Paginated history must be
+  // materialized too, or Codex opens the thread to an empty conversation.
+  // Codex's P1 report caught exactly that: registration and resume both reported
+  // success while `thread/list` omitted the thread and `items/list` failed with
+  // "source rollout is not paginated".
+  const history = new DatabaseSync(join(home, 'thread_history_1.sqlite'), { readOnly: true })
+  try {
+    const items = history.prepare('SELECT item_json FROM thread_items WHERE thread_id = ?').all(threadId) as { item_json: string }[]
+    const turns = history.prepare('SELECT COUNT(*) AS c FROM thread_turns WHERE thread_id = ?').get(threadId) as { c: number }
+    // The projected item type is camelCase (`userMessage`), while the accepted
+    // `item_completed.item.type` is PascalCase (`UserMessage`) and its content
+    // block types are `text` / `Text`. Three casings for the same concepts;
+    // compare case-insensitively rather than pin a fourth assumption.
+    const kinds = items.map((row) => ((JSON.parse(row.item_json) as { type?: string }).type ?? '?').toLowerCase())
+    t.diagnostic(`projected items=${items.length} types=[${kinds.join(', ')}] turns=${turns.c}`)
+    assert.ok(items.length >= 2, 'Codex projected the imported user and assistant items')
+    assert.ok(kinds.includes('usermessage'), 'the user item is projected')
+    assert.ok(kinds.includes('agentmessage'), 'the assistant item is projected')
+    assert.ok(turns.c >= 1, 'Codex projected at least one turn')
+  } finally {
+    history.close()
+  }
 })
