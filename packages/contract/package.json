@@ -1,0 +1,16 @@
+{
+  "name": "@agent-continue/contract",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Field-level mapping between the Codex rollout format and DSH session format v4",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\""
+  }
+}
