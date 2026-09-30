@@ -1,0 +1,17 @@
+{
+  "name": "@agent-continue/dsh-adapter",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Read and write DeepSeek Harness session.vN.jsonl.zstd artifacts from outside the harness",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "exports": {
+    ".": "./src/index.ts",
+    "./zstd": "./src/zstd.ts"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.ts\""
+  }
+}
