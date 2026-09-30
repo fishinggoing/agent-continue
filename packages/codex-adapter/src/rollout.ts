@@ -20,8 +20,16 @@ export type JsonObject = Record<string, unknown>
 export interface RolloutRecord {
   /** ISO-8601 timestamp assigned by the writer. */
   timestamp: string
-  /** Zero-based record index within the rollout; sibling of DSH's `seq`. */
-  ordinal: number
+  /**
+   * Zero-based record index, when the writer recorded one.
+   *
+   * Optional: Codex writes it when it creates a rollout, but **not** when it
+   * appends to one — measured on a resumed rollout, where the eight records an
+   * external writer produced carried ordinals 0-7 and the fourteen records Codex
+   * appended afterwards carried none. Line order is the authoritative sequence;
+   * treat this field as a cross-check only.
+   */
+  ordinal?: number
   /** Top-level record type. */
   type: string
   /** Type-specific body; `response_item` and `event_msg` carry their own `type` here. */
@@ -44,7 +52,8 @@ export interface ParsedRollout {
   failures: RolloutParseFailure[]
 }
 
-const ENVELOPE_KEYS = ['timestamp', 'ordinal', 'type', 'payload'] as const
+/** Envelope keys a rollout line cannot omit. `ordinal` is optional; see `RolloutRecord`. */
+const ENVELOPE_REQUIRED_KEYS = ['timestamp', 'type', 'payload'] as const
 
 /**
  * Parse one rollout file's text.
@@ -86,11 +95,14 @@ export function parseRollout(text: string): ParsedRollout {
 function validateEnvelope(value: unknown, line: number): string | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'record is not a JSON object'
   const record = value as JsonObject
-  for (const key of ENVELOPE_KEYS) {
+  for (const key of ENVELOPE_REQUIRED_KEYS) {
     if (!(key in record)) return `record is missing envelope key "${key}"`
   }
   if (typeof record.timestamp !== 'string') return 'envelope timestamp is not a string'
-  if (typeof record.ordinal !== 'number' || !Number.isSafeInteger(record.ordinal)) return 'envelope ordinal is not an integer'
+  if (record.ordinal !== undefined
+    && (typeof record.ordinal !== 'number' || !Number.isSafeInteger(record.ordinal))) {
+    return 'envelope ordinal is present but not an integer'
+  }
   if (typeof record.type !== 'string') return 'envelope type is not a string'
   if (typeof record.payload !== 'object' || record.payload === null) return `payload of "${record.type}" is not an object (line ${line})`
   return undefined

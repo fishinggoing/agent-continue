@@ -50,6 +50,20 @@ test('parses the envelope and keeps unknown record types', () => {
   const noPayload = parseRollout(JSON.stringify({ timestamp: 'x', ordinal: 0, type: 'session_meta' }))
   assert.equal(noPayload.records.length, 0)
   assert.match(noPayload.failures[0]!.reason, /missing envelope key "payload"/)
+
+  // `ordinal` is optional: Codex omits it when appending to a rollout it did not
+  // create, so a file can mix both forms.
+  const mixed = parseRollout([
+    JSON.stringify({ timestamp: 't', ordinal: 0, type: 'session_meta', payload: {} }),
+    JSON.stringify({ timestamp: 't', type: 'event_msg', payload: { type: 'task_started' } }),
+  ].join('\n'))
+  assert.equal(mixed.failures.length, 0)
+  assert.equal(mixed.records[0]!.ordinal, 0)
+  assert.equal(mixed.records[1]!.ordinal, undefined, 'an omitted ordinal is not a defect')
+
+  // A present but malformed ordinal is still rejected.
+  const badOrdinal = parseRollout(JSON.stringify({ timestamp: 't', ordinal: 1.5, type: 'session_meta', payload: {} }))
+  assert.match(badOrdinal.failures[0]!.reason, /ordinal is present but not an integer/)
 })
 
 test('normalizes both tool-output encodings', () => {
@@ -75,6 +89,7 @@ test('reads every rollout in the real Codex store', (t) => {
   let records = 0
   let failures = 0
   let badFirstRecord = 0
+  let missingOrdinal = 0
   const home = process.env.CODEX_HOME ?? codexHome()
 
   for (const { file, parsed } of corpus) {
@@ -86,8 +101,13 @@ test('reads every rollout in the real Codex store', (t) => {
 
     if (parsed.records[0]?.type !== 'session_meta') badFirstRecord += 1
 
-    // ordinals must be dense and zero-based, like DSH's seq.
+    // Where a writer recorded an ordinal it must equal the line index. Not every
+    // writer does: Codex omits it when appending to a rollout it did not create.
     for (const [index, record] of parsed.records.entries()) {
+      if (record.ordinal === undefined) {
+        missingOrdinal += 1
+        continue
+      }
       if (record.ordinal !== index) ordinalGaps.push(`${file.sessionId}#${index}->${record.ordinal}`)
     }
 
@@ -105,10 +125,11 @@ test('reads every rollout in the real Codex store', (t) => {
   t.diagnostic(`rollouts=${corpus.length} records=${records} parse_failures=${failures} first_record_not_meta=${badFirstRecord}`)
   t.diagnostic(`top kinds: ${[...allKinds].sort((a, b) => b[1] - a[1]).slice(0, 24).map(([k, n]) => `${k}=${n}`).join(' ')}`)
   t.diagnostic(`ordinal gaps: ${ordinalGaps.length}${ordinalGaps.length ? ' -> ' + ordinalGaps.slice(0, 4).join(', ') : ''}`)
+  t.diagnostic(`records without ordinal: ${missingOrdinal} of ${records}`)
   t.diagnostic(`filename vs session_meta id mismatches: ${idMismatches.length}`)
   t.diagnostic(`filename-decoded path mismatches: ${pathMismatches.length}`)
 
-  assert.deepEqual(ordinalGaps, [], 'ordinal must be the dense zero-based index')
+  assert.deepEqual(ordinalGaps, [], 'a recorded ordinal must equal its line index')
   assert.deepEqual(idMismatches, [], 'the id in the filename must equal session_meta.id')
   assert.deepEqual(pathMismatches, [], 'a decoded filename must resolve to the file it came from')
   assert.equal(badFirstRecord, 0, 'every rollout starts with session_meta')
