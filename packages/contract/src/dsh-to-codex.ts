@@ -163,11 +163,15 @@ export function convertDshToCodex(
 
       case 'user/message': {
         turn ??= openTurn(1, atMs)
+        const content = toCodexContent(data.content, 'input_text')
+        if (content.dropped > 0) {
+          tally(CONTENT_BLOCKS, 'dropped', 'DSH content blocks with no Codex equivalent (only text survives)', content.dropped)
+        }
         push('response_item', {
           type: 'message',
           id: `msg_${String(data.id ?? randomUUID())}`,
           role: 'user',
-          content: toCodexContent(data.content, 'input_text'),
+          content: content.blocks,
           internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
         }, iso(atMs))
         push('event_msg', {
@@ -177,7 +181,7 @@ export function convertDshToCodex(
             type: 'UserMessage',
             id: `item_${String(data.id ?? randomUUID())}`,
             client_id: null,
-            content: toCodexContent(data.content, 'input_text'),
+            content: content.blocks,
           },
           started_at_ms: atMs,
           completed_at_ms: atMs,
@@ -189,12 +193,15 @@ export function convertDshToCodex(
       case 'assistant/message': {
         turn ??= openTurn(1, atMs)
         const message = (data.message ?? {}) as JsonObject
-        const blocks = toCodexContent(message.content, 'output_text')
+        const content = toCodexContent(message.content, 'output_text')
+        if (content.dropped > 0) {
+          tally(CONTENT_BLOCKS, 'dropped', 'DSH content blocks with no Codex equivalent (only text survives)', content.dropped)
+        }
         push('response_item', {
           type: 'message',
           id: `msg_${String(message.id ?? randomUUID())}`,
           role: 'assistant',
-          content: blocks,
+          content: content.blocks,
           internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
         }, iso(atMs))
         push('event_msg', {
@@ -204,7 +211,7 @@ export function convertDshToCodex(
             type: 'AgentMessage',
             id: `item_${String(message.id ?? randomUUID())}`,
             client_id: null,
-            content: blocks,
+            content: content.blocks,
           },
           started_at_ms: atMs,
           completed_at_ms: atMs,
@@ -307,24 +314,37 @@ function firstModelSource(events: readonly SessionEvent[]): { provider?: string;
   return undefined
 }
 
+/** Tally key for content blocks that could not be carried across. */
+const CONTENT_BLOCKS = 'message.content-blocks'
+
 /**
  * Convert DSH content blocks into Codex content blocks.
  *
  * Only text survives: DSH reasoning and tool-call blocks have no Codex content
  * equivalent — Codex keeps reasoning in `encrypted_content` and tool calls as
- * their own records.
+ * their own records. `input_text` / `output_text` are accepted as well as
+ * `text`, because a log written by an older converter may still carry them.
  * @param content - DSH content block array.
  * @param textType - `input_text` for user messages, `output_text` for assistant.
- * @returns Codex content blocks.
+ * @returns Codex content blocks, plus how many input blocks were dropped.
  */
-function toCodexContent(content: unknown, textType: string): JsonObject[] {
-  if (!Array.isArray(content)) return []
-  return content.flatMap((block) => {
-    if (typeof block !== 'object' || block === null) return []
+function toCodexContent(content: unknown, textType: string): { blocks: JsonObject[]; dropped: number } {
+  if (!Array.isArray(content)) return { blocks: [], dropped: 0 }
+  const blocks: JsonObject[] = []
+  let dropped = 0
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null) {
+      dropped += 1
+      continue
+    }
     const entry = block as JsonObject
-    if (entry.type !== 'text' || typeof entry.text !== 'string') return []
-    return [{ type: textType, text: entry.text }]
-  })
+    const type = entry.type
+    const text = entry.text
+    const isText = type === 'text' || type === 'input_text' || type === 'output_text'
+    if (isText && typeof text === 'string') blocks.push({ type: textType, text })
+    else dropped += 1
+  }
+  return { blocks, dropped }
 }
 
 /**

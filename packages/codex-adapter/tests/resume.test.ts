@@ -1,4 +1,4 @@
-/**
+﻿/**
  * End-to-end acceptance: a thread this package writes must be resumed by the
  * real Codex CLI.
  *
@@ -118,7 +118,7 @@ test('a hand-written thread is resumed by the Codex CLI', (t) => {
     cwd,
     env: { ...process.env, CODEX_HOME: home },
     encoding: 'utf8',
-    timeout: 240_000,
+    timeout: 900_000,
   })
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
 

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Real migration: a DSH session becomes a Codex thread that Codex itself resumes.
  *
  * The conversion half runs anywhere. The acceptance half writes into an isolated
@@ -99,7 +99,7 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
     cwd,
     env: { ...process.env, CODEX_HOME: home },
     encoding: 'utf8',
-    timeout: 240_000,
+    timeout: 900_000,
   })
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
 

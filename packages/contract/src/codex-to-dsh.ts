@@ -77,9 +77,9 @@ export function convertCodexToDsh(
   options: ConvertOptions,
 ): ConversionResult {
   const tallies: Record<string, MappingTally> = {}
-  const tally = (kind: string, outcome: 'mapped' | 'dropped', reason?: string): void => {
+  const tally = (kind: string, outcome: 'mapped' | 'dropped', reason?: string, count = 1): void => {
     const entry = tallies[kind] ?? { mapped: 0, dropped: 0 }
-    entry[outcome] += 1
+    entry[outcome] += count
     if (outcome === 'dropped' && reason !== undefined) entry.reason = reason
     tallies[kind] = entry
   }
@@ -211,13 +211,17 @@ export function convertCodexToDsh(
         if (turn === undefined) openTurn(`turn-${turnCount + 1}`, Date.parse(record.timestamp) || Date.now())
         if (role === 'assistant') {
           const current = beginStep()
+          const content = toDshContent(record.payload.content)
+          if (content.dropped > 0) {
+            tally(CONTENT_BLOCKS, 'dropped', 'Codex content blocks with no DSH equivalent (only text survives)', content.dropped)
+          }
           push('assistant/message', {
             turn: current.turn,
             step: current.step,
             message: {
               id: String(record.payload.id ?? `msg-${events.length}`),
               role: 'assistant',
-              content: assistantContent(record.payload.content),
+              content: content.blocks,
               source: { kind: 'model', provider, model: modelOf(record, fallbackModel) },
             },
             ...(current.usage === undefined ? {} : { usage: current.usage }),
@@ -227,10 +231,14 @@ export function convertCodexToDsh(
           current.usage = undefined
         } else {
           beginStep()
+          const content = toDshContent(record.payload.content)
+          if (content.dropped > 0) {
+            tally(CONTENT_BLOCKS, 'dropped', 'Codex content blocks with no DSH equivalent (only text survives)', content.dropped)
+          }
           push('user/message', {
             id: String(record.payload.id ?? `msg-${events.length}`),
             role: 'user',
-            content: record.payload.content,
+            content: content.blocks,
             source: { kind: 'user' },
           }, 'append')
         }
@@ -344,20 +352,41 @@ function contentText(content: unknown): string {
 }
 
 /**
- * Convert Codex content blocks into DSH assistant content blocks.
- * @param content - a Codex content block array.
- * @returns DSH content blocks; input_text blocks become `text`, output_text stays `text`.
+ * Tally key for content blocks that could not be carried across.
+ *
+ * Block-level loss is tracked separately from record-level loss: a message whose
+ * envelope survives but whose blocks are dropped must not be reported as a clean
+ * mapping.
  */
-function assistantContent(content: unknown): JsonObject[] {
-  if (!Array.isArray(content)) return []
-  return content.flatMap((block) => {
-    if (typeof block !== 'object' || block === null) return []
+const CONTENT_BLOCKS = 'message.content-blocks'
+
+/**
+ * Convert Codex content blocks into DSH content blocks.
+ *
+ * DSH's own logs use only `{type:'text', text}` for message content, so Codex's
+ * `input_text` / `output_text` are **normalized** rather than passed through.
+ * Writing a foreign block type into a DSH log is what silently lost user text
+ * before: DSH accepted the artifact and resumed it, so nothing complained.
+ * @param content - a Codex content block array.
+ * @returns DSH text blocks, plus how many input blocks were dropped.
+ */
+function toDshContent(content: unknown): { blocks: JsonObject[]; dropped: number } {
+  if (!Array.isArray(content)) return { blocks: [], dropped: 0 }
+  const blocks: JsonObject[] = []
+  let dropped = 0
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null) {
+      dropped += 1
+      continue
+    }
     const entry = block as JsonObject
+    const type = entry.type
     const text = entry.text
-    if (typeof text !== 'string') return []
-    // Codex carries reasoning inside its own response_item, so only text survives here.
-    return [{ type: 'text', text }]
-  })
+    const isText = type === 'text' || type === 'input_text' || type === 'output_text'
+    if (isText && typeof text === 'string') blocks.push({ type: 'text', text })
+    else dropped += 1
+  }
+  return { blocks, dropped }
 }
 
 /**

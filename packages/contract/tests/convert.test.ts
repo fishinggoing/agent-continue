@@ -116,3 +116,58 @@ test('reports DSH-private events as losses instead of inventing records', () => 
   assert.equal(conversion.tallies['agent/inbox/spliced']?.dropped, 1)
   assert.ok(conversion.losses.some((line) => line.includes('request/header')))
 })
+
+/**
+ * Regression for Codex's P1 report: Codex user text was silently lost on a full
+ * round trip. `codex-to-dsh` passed `input_text` through verbatim, so the DSH
+ * log carried a foreign block type that `dsh-to-codex` then refused to read back.
+ * Real DSH accepted and resumed that artifact, so nothing complained.
+ */
+test('preserves user and assistant text across a full round trip', () => {
+  const codexRecords = parseRollout([
+    { timestamp: '2026-06-01T00:00:00.000Z', ordinal: 0, type: 'session_meta', payload: { id: 'rt', cwd: 'F:\\proj', model_provider: 'example-provider' } },
+    { timestamp: '2026-06-01T00:00:01.000Z', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1', started_at: 1_780_000_000 } },
+    { timestamp: '2026-06-01T00:00:02.000Z', ordinal: 2, type: 'response_item', payload: { type: 'message', id: 'm1', role: 'user', content: [{ type: 'input_text', text: 'ROUND TRIP QUESTION' }] } },
+    { timestamp: '2026-06-01T00:00:03.000Z', ordinal: 3, type: 'turn_context', payload: { turn_id: 't1', model: 'example-model' } },
+    { timestamp: '2026-06-01T00:00:04.000Z', ordinal: 4, type: 'response_item', payload: { type: 'message', id: 'm2', role: 'assistant', content: [{ type: 'output_text', text: 'ROUND TRIP ANSWER' }] } },
+    { timestamp: '2026-06-01T00:00:05.000Z', ordinal: 5, type: 'event_msg', payload: { type: 'task_complete', turn_id: 't1', started_at: 1_780_000_000, completed_at: 1_780_000_005 } },
+  ].map((record) => JSON.stringify(record)).join('\n')).records
+
+  const there = convertCodexToDsh(codexRecords, { sessionId: 'round-trip', cwd: 'F:\\proj' })
+
+  // Codex's `input_text` must be normalized to the block type DSH actually uses.
+  const userEvent = there.events.find((event) => event.type === 'user/message')!
+  assert.deepEqual((userEvent.data as { content: unknown }).content, [{ type: 'text', text: 'ROUND TRIP QUESTION' }])
+  const assistantEvent = there.events.find((event) => event.type === 'assistant/message')!
+  const assistantMessage = (assistantEvent.data as { message: { content: unknown } }).message
+  assert.deepEqual(assistantMessage.content, [{ type: 'text', text: 'ROUND TRIP ANSWER' }])
+
+  const back = convertDshToCodex(there.header, there.events, { cliVersion: '1.0.0', threadId: 'rt-uuid' })
+  const serialized = back.drafts.map((draft) => JSON.stringify(draft)).join('\n')
+  assert.ok(serialized.includes('ROUND TRIP QUESTION'), 'user text survives the round trip')
+  assert.ok(serialized.includes('ROUND TRIP ANSWER'), 'assistant text survives the round trip')
+  assert.equal(serialized.includes('input_text'), true, 'user blocks are emitted as input_text')
+  assert.equal(serialized.includes('output_text'), true, 'assistant blocks are emitted as output_text')
+
+  // Neither leg may claim a clean mapping while dropping blocks.
+  assert.equal(there.tallies['message.content-blocks']?.dropped ?? 0, 0)
+  assert.equal(back.tallies['message.content-blocks']?.dropped ?? 0, 0)
+  assert.deepEqual(there.losses.filter((line) => line.includes('content-blocks')), [])
+  assert.deepEqual(back.losses.filter((line) => line.includes('content-blocks')), [])
+})
+
+test('reports dropped content blocks instead of claiming a clean mapping', () => {
+  const codexRecords = parseRollout([
+    { timestamp: 't', ordinal: 0, type: 'session_meta', payload: { id: 'x', cwd: 'F:\\proj' } },
+    { timestamp: 't', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 2, type: 'response_item', payload: { type: 'message', id: 'm1', role: 'user', content: [{ type: 'input_text', text: 'kept' }, { type: 'input_image', image_url: 'data:...' }] } },
+  ].map((record) => JSON.stringify(record)).join('\n')).records
+
+  const conversion = convertCodexToDsh(codexRecords, { sessionId: 'blocks', cwd: 'F:\\proj' })
+  assert.equal(conversion.tallies['message.content-blocks']?.dropped, 1, 'the image block is counted as lost')
+  assert.ok(conversion.losses.some((line) => line.includes('content-blocks')), 'the loss is reported to the caller')
+
+  // And the DSH side still receives the text block it can read.
+  const userEvent = conversion.events.find((event) => event.type === 'user/message')!
+  assert.deepEqual((userEvent.data as { content: unknown }).content, [{ type: 'text', text: 'kept' }])
+})
