@@ -7,7 +7,7 @@
  * rejected record must fail here rather than produce a session the harness
  * refuses to open.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 import { parseEvent, parseHeader, type SessionEvent, type SessionHeader } from './format.ts'
@@ -22,6 +22,19 @@ export interface WrittenArtifact {
   bytes: number
   /** Number of frames written: one header frame plus one per batch. */
   frames: number
+  /** True when an artifact already existed at that path and was replaced. */
+  replaced: boolean
+}
+
+/** Options for {@link writeArtifact}. */
+export interface WriteArtifactOptions {
+  /**
+   * Allow replacing an artifact that already exists at the derived path.
+   *
+   * Defaults to `false`: an import that reuses a session id would otherwise
+   * silently destroy the session already stored there.
+   */
+  overwrite?: boolean
 }
 
 /**
@@ -39,6 +52,11 @@ export function encodeArtifact(
   const validatedHeader = parseHeader(header)
   const validatedEvents = events.map((event, index) => parseEvent(event, index))
 
+  for (const [index, size] of batches.entries()) {
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new Error(`batch ${index} size must be a non-negative safe integer, got ${size}`)
+    }
+  }
   const total = batches.reduce((sum, size) => sum + size, 0)
   if (total !== validatedEvents.length) {
     throw new Error(`batch sizes sum to ${total} but there are ${validatedEvents.length} events`)
@@ -60,17 +78,23 @@ export function encodeArtifact(
  * @param root - sessions root, normally `$DSH_HOME/sessions`.
  * @param header - session header; its `id` and `cwd` also name the location.
  * @param events - events in `seq` order.
+ * @param options - set `overwrite` to replace an existing artifact.
  * @returns what was written.
  */
 export function writeArtifact(
   root: string,
   header: SessionHeader,
   events: readonly SessionEvent[],
+  options: WriteArtifactOptions = {},
 ): WrittenArtifact {
   const bytes = encodeArtifact(header, events)
   const location: ArtifactLocation = { root, cwd: header.cwd, id: header.id, version: header.version }
   const path = artifactPath(location)
+  const replaced = existsSync(path)
+  if (replaced && options.overwrite !== true) {
+    throw new Error(`refusing to overwrite an existing session artifact: ${path}`)
+  }
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, bytes)
-  return { path, bytes: bytes.length, frames: 1 + (events.length > 0 ? 1 : 0) }
+  return { path, bytes: bytes.length, frames: 1 + (events.length > 0 ? 1 : 0), replaced }
 }

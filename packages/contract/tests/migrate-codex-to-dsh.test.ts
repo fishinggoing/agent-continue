@@ -80,8 +80,10 @@ test('converts a real Codex rollout into a session DSH accepts', async (t) => {
     return
   }
 
-  const written = writeArtifact(join(home, 'sessions'), conversion.header, conversion.events)
-  t.diagnostic(`wrote ${written.path} (${written.bytes} bytes, ${written.frames} frames)`)
+  // The target id is derived from the source, so re-running replaces the artifact
+  // deliberately; the writer refuses to do that unless asked.
+  const written = writeArtifact(join(home, 'sessions'), conversion.header, conversion.events, { overwrite: true })
+  t.diagnostic(`wrote ${written.path} (${written.bytes} bytes, ${written.frames} frames)${written.replaced ? ' [replaced]' : ''}`)
 
   await withAcp({ cli, home, profile: process.env.DSH_PROBE_PROFILE ?? 'probe-acp', timeoutMs: 120_000 }, async (call) => {
     const listed = await call('session/list', { cwd })

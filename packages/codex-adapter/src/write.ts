@@ -16,7 +16,7 @@
  * `world_state`, `turn_context`, paired `item_completed` events, token records,
  * `task_complete`.
  */
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -57,6 +57,19 @@ export interface WrittenRollout {
   bytes: number
   /** Number of records written. */
   records: number
+  /** True when a rollout already existed at that path and was replaced. */
+  replaced: boolean
+}
+
+/** Options for {@link writeRollout}. */
+export interface WriteRolloutOptions {
+  /**
+   * Allow replacing a rollout that already exists at the derived path.
+   *
+   * Defaults to `false`: an import reusing a session id would otherwise destroy
+   * the thread already stored there.
+   */
+  overwrite?: boolean
 }
 
 /**
@@ -65,6 +78,7 @@ export interface WrittenRollout {
  * @param sessionId - session id; also the thread id.
  * @param when - local start time, which names the day directory and the filename.
  * @param drafts - records in order.
+ * @param options - set `overwrite` to replace an existing rollout.
  * @returns what was written.
  */
 export function writeRollout(
@@ -72,13 +86,18 @@ export function writeRollout(
   sessionId: string,
   when: Date,
   drafts: readonly RolloutDraft[],
+  options: WriteRolloutOptions = {},
 ): WrittenRollout {
   const timestamp = when.toISOString()
   const text = encodeRollout(drafts, timestamp)
   const path = rolloutPath(home, when, sessionId)
+  const replaced = existsSync(path)
+  if (replaced && options.overwrite !== true) {
+    throw new Error(`refusing to overwrite an existing rollout: ${path}`)
+  }
   mkdirSync(dirname(path), { recursive: true })
   writeFileSync(path, text)
-  return { path, bytes: Buffer.byteLength(text), records: drafts.length }
+  return { path, bytes: Buffer.byteLength(text), records: drafts.length, replaced }
 }
 
 /**
@@ -136,13 +155,26 @@ const HISTORY_MODE = 'paginated'
 
 /**
  * Insert the registry row that makes a rollout listable.
+ *
+ * Refuses an id that is already registered, because replacing the row would
+ * point an existing thread at a different rollout.
  * @param stateDbPath - path to `state_5.sqlite`.
  * @param registration - the thread to register.
+ * @param options - set `overwrite` to replace an existing row.
  * @returns nothing.
  */
-export function registerThread(stateDbPath: string, registration: ThreadRegistration): void {
+export function registerThread(
+  stateDbPath: string,
+  registration: ThreadRegistration,
+  options: WriteRolloutOptions = {},
+): void {
   const db = new DatabaseSync(stateDbPath)
   try {
+    const existing = db.prepare('SELECT id FROM threads WHERE id = ?').get(registration.id)
+    if (existing !== undefined && options.overwrite !== true) {
+      throw new Error(`refusing to overwrite the registered thread "${registration.id}"`)
+    }
+    if (existing !== undefined) db.prepare('DELETE FROM threads WHERE id = ?').run(registration.id)
     db.prepare(`INSERT INTO threads (
         id, rollout_path, created_at, updated_at, source, model_provider, cwd, title,
         sandbox_policy, approval_mode, tokens_used, has_user_event, archived,

@@ -68,6 +68,20 @@ test('writes a rollout where Codex looks for it', () => {
   assert.equal(readFileSync(written.path, 'utf8').trim().split('\n').length, 1)
 })
 
+test('refuses to clobber an existing rollout unless asked to', () => {
+  const home = mkdtempSync(join(tmpdir(), 'codex-clobber-'))
+  const when = new Date(2026, 8, 30, 16, 20, 5)
+  const drafts = [{ type: 'session_meta', payload: { id: 'dup' } }]
+
+  const first = writeRollout(home, 'dup', when, drafts)
+  assert.equal(first.replaced, false)
+  assert.throws(() => writeRollout(home, 'dup', when, drafts), /refusing to overwrite an existing rollout/)
+
+  const again = writeRollout(home, 'dup', when, drafts, { overwrite: true })
+  assert.equal(again.replaced, true)
+  assert.equal(again.path, first.path)
+})
+
 test('registers a thread the way the real schema requires', () => {
   const dir = mkdtempSync(join(tmpdir(), 'codex-registry-'))
   const statePath = join(dir, 'state_5.sqlite')
@@ -104,6 +118,19 @@ test('registers a thread the way the real schema requires', () => {
   assert.equal(row.tokens_used, 0)
   assert.equal(row.archived, 0)
   assert.equal(row.sandbox_policy, '{"type":"disabled"}')
+
+  // A second registration of the same id is refused rather than silently
+  // repointing an existing thread at a different rollout.
+  assert.throws(() => registerThread(statePath, {
+    id,
+    rolloutPath: 'F:\\home\\sessions\\other.jsonl',
+    createdAt: 1,
+    updatedAt: 1,
+    source: 'exec',
+    modelProvider: 'example-provider',
+    cwd: 'F:\\agent-continue',
+    title: 'duplicate',
+  }), /refusing to overwrite the registered thread/)
 })
 
 test('seeds and resets the projection cursor', () => {
