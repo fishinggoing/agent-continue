@@ -1,16 +1,16 @@
 /**
  * Frame-container tests.
  *
- * The second test is the important one: it decodes artifacts that DSH itself
- * wrote, which is the only way to know our reading of the container matches the
- * writer. It never prints record content — only structural counts.
+ * The second test decodes artifacts that DSH itself wrote, which is the only
+ * way to know our reading of the container matches the writer. It never prints
+ * record content — only structural counts and type names.
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 
 import { compressFrame, readFrames, scanFrames } from '../src/zstd.ts'
+import { findArtifacts, readArtifact, sessionRoot } from './corpus.ts'
 
 test('round-trips concatenated frames and reports a torn tail', () => {
   const batches = ['{"n":0}\n', '{"n":1}\n{"n":2}\n', '{"n":3}\n']
@@ -32,99 +32,59 @@ test('round-trips concatenated frames and reports a torn tail', () => {
   assert.equal(readFrames(torn).text, batches.slice(0, 2).join(''))
 })
 
-test('decodes artifacts written by DSH', (t) => {
-  const root = process.env.DSH_SESSION_ROOT
-    ?? join(process.env.DSH_HOME ?? join(process.env.USERPROFILE ?? '', '.dsh'), 'sessions')
+test('rejects a stream that does not start with a frame', () => {
+  assert.throws(() => scanFrames(Buffer.from('not a zstd file, just text')), /not a zstd frame/)
+})
 
-  let artifacts: string[] = []
+test('decodes artifacts written by DSH', (t) => {
+  let paths: string[]
   try {
-    artifacts = findArtifacts(root)
+    paths = findArtifacts(sessionRoot())
   } catch {
-    t.skip(`no DSH session store at ${root}`)
+    t.skip(`no DSH session store at ${sessionRoot()}`)
     return
   }
-  if (artifacts.length === 0) {
-    t.skip(`no session.vN.jsonl.zstd under ${root}`)
+  if (paths.length === 0) {
+    t.skip(`no session.vN.jsonl.zstd under ${sessionRoot()}`)
     return
   }
 
   let torn = 0
   let records = 0
   let headers = 0
-  let unreadable = 0
   const versions = new Map<number, number>()
   const kinds = new Map<string, number>()
   const seqGaps: string[] = []
 
-  for (const path of artifacts) {
+  for (const path of paths) {
+    // Frames must cover the file exactly; a torn tail is legal only while a
+    // writer is appending, and is reported rather than thrown on.
+    const scan = scanFrames(readFileSync(path))
     const version = Number(/^session\.v(\d+)\.jsonl\.zstd$/.exec(path.split(/[\\/]/).pop()!)![1])
     versions.set(version, (versions.get(version) ?? 0) + 1)
-
-    let text: string
-    let scan
-    try {
-      ({ text, scan } = readFrames(readFileSync(path)))
-    } catch (error) {
-      // A file being appended to right now can hold a frame our structural walk
-      // still rejects; record it instead of failing the whole corpus.
-      unreadable += 1
-      t.diagnostic(`unreadable: ${path.split(/[\\/]/).slice(-3).join('/')} -> ${(error as Error).message}`)
-      continue
-    }
     if (scan.tornStart !== undefined) torn += 1
 
-    const lines = text.split('\n').filter((line) => line.trim() !== '')
-    assert.ok(lines.length > 0, `${path}: no records`)
+    const { header, records: events } = readArtifact(path)
+    headers += 1
+    assert.equal(header.type, 'session', `${path}: first record is the session header`)
+    assert.equal(header.version, version, `${path}: header version matches the filename`)
 
-    for (const [index, line] of lines.entries()) {
-      let record: { type?: unknown; seq?: unknown; time?: unknown; data?: unknown; version?: unknown }
-      try {
-        record = JSON.parse(line)
-      } catch {
-        assert.fail(`${path}: record ${index} is not JSON`)
-      }
+    for (const [index, record] of events.entries()) {
       assert.equal(typeof record.type, 'string', `${path}: record ${index} has no type`)
-      kinds.set(record.type as string, (kinds.get(record.type as string) ?? 0) + 1)
-
-      if (index === 0) {
-        headers += 1
-        assert.equal(record.type, 'session', `${path}: first record is the session header`)
-        assert.equal(record.version, version, `${path}: header version matches the filename`)
-        continue
-      }
-      records += 1
       assert.equal(typeof record.seq, 'number', `${path}: record ${index} has no seq`)
       assert.equal(typeof record.time, 'number', `${path}: record ${index} has no time`)
       assert.ok('data' in record, `${path}: record ${index} has no data`)
-      if (record.seq !== index - 1) seqGaps.push(`${path.split(/[\\/]/).slice(-3).join('/')}#${index}`)
+      kinds.set(record.type as string, (kinds.get(record.type as string) ?? 0) + 1)
+      if (record.seq !== index) seqGaps.push(`${path.split(/[\\/]/).slice(-3).join('/')}#${index}`)
     }
+    records += events.length
   }
 
-  t.diagnostic(`artifacts=${artifacts.length} headers=${headers} event_records=${records} torn_tail=${torn} unreadable=${unreadable}`)
+  t.diagnostic(`artifacts=${paths.length} headers=${headers} event_records=${records} torn_tail=${torn}`)
   t.diagnostic(`format versions: ${[...versions].sort().map(([v, n]) => `v${v}=${n}`).join(' ')}`)
   t.diagnostic(`event types: ${[...kinds].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k}=${n}`).join(' ')}`)
   t.diagnostic(`seq != 0-based index: ${seqGaps.length} occurrence(s)${seqGaps.length ? ' -> ' + seqGaps.slice(0, 5).join(', ') : ''}`)
 
-  assert.equal(headers, artifacts.length - unreadable, 'every readable artifact starts with a header record')
+  assert.equal(headers, paths.length, 'every artifact starts with a header record')
   assert.ok(records > 0, 'real artifacts contain conversation records')
 })
-
-/**
- * Collect `session.vN.jsonl.zstd` artifacts under a DSH session root.
- * @param root - absolute path to the sessions directory.
- * @returns absolute artifact paths, capped to keep the test bounded.
- */
-function findArtifacts(root: string, limit = 40): string[] {
-  const found: string[] = []
-  const walk = (dir: string, depth: number): void => {
-    if (found.length >= limit || depth > 4) return
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (found.length >= limit) return
-      const path = join(dir, entry.name)
-      if (entry.isDirectory()) walk(path, depth + 1)
-      else if (/^session\.v\d+\.jsonl\.zstd$/.test(entry.name)) found.push(path)
-    }
-  }
-  walk(root, 0)
-  return found
-}
