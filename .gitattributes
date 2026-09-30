@@ -1,0 +1,17 @@
+# 两个 harness（DeepSeek Harness / Codex）共用本仓库，行尾必须确定，
+# 否则同一次改动会在两边产生整文件级 diff。
+* text=auto eol=lf
+
+# Windows 脚本必须是 CRLF
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 二进制，不做任何转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.zstd binary
+*.sqlite binary

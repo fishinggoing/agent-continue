@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.agent-continue/
+.venv/
+*.egg-info/
+build/
+dist/
+reference-orchestrator/
+research-deepseek/
+research-codex/
+node_modules/
+*.log
+.env
+.env.*
+
+# 本地凭据与私密材料，禁止提交
+pdf_text.txt
+*.pdf
