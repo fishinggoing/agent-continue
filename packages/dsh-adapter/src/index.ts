@@ -45,3 +45,5 @@ export {
   type WriteArtifactOptions,
   type WrittenArtifact,
 } from './write.ts'
+
+export { currentSurface } from './surface.ts'

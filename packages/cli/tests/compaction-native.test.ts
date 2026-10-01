@@ -87,13 +87,28 @@ for (const scenario of ['uncompressed', 'plaintext', 'repeated', 'retained-tool'
           const activeTexts = ['ORIGINAL REQUIREMENTS', scenario === 'uncompressed' ? 'OBSOLETE PARTIAL PLAN' : 'COMPACTED STATE', 'CONTINUE AFTER COMPACTION', 'POST-COMPACTION WORK', '\u7ee7\u7eed']
           for (const text of activeTexts) assert.ok(projection.includes(text), text)
           for (const text of [
-            ...(scenario === 'uncompressed' ? [] : ['OBSOLETE PARTIAL PLAN', 'ARCHIVED TOOL RESULT']),
+            ...(scenario === 'uncompressed' ? [] : ['OBSOLETE PARTIAL PLAN']),
+            ...(['uncompressed', 'unknown-outcome'].includes(scenario) ? [] : ['ARCHIVED TOOL RESULT']),
             'UNUSED SUMMARY FALLBACK', 'OBSOLETE INTERMEDIATE SUMMARY',
           ]) assert.ok(!projection.includes(text), text)
           const ordered = activeTexts.map((text) => projection.indexOf(text))
           assert.ok(ordered.every((position, index) => index === 0 || position > ordered[index - 1]!))
           if (scenario === 'retained-tool') assert.ok(projection.includes('retained-call') && projection.includes('RETAINED TOOL OUTPUT'))
-          if (scenario === 'unknown-outcome') assert.ok(projection.includes('TOOL_OUTCOME_UNKNOWN') && projection.includes('archived-call'))
+          if (scenario === 'unknown-outcome') {
+            assert.ok(projection.includes('TOOL_OUTCOME_UNKNOWN') && projection.includes('archived-call'))
+            const blocks = (fixture.requests.at(-1)!.messages as any[]).flatMap(message => message.content)
+            const calls = blocks.filter(block => block.type === 'tool_use' && block.id === 'archived-call')
+            const results = blocks.filter(block => block.type === 'tool_result' && block.tool_use_id === 'archived-call')
+            assert.equal(calls.length, 1)
+            assert.equal(results.length, 1)
+            assert.equal(results[0].is_error, true)
+            assert.deepEqual(results[0].content, [{ type: 'text', text: 'ARCHIVED TOOL RESULT' }])
+            const restored = parseSessionLog(readFrames(readFileSync(output)).text, 4)
+            const active = activeEvents(restored.events).filter(event => event.type === 'tool/result')
+            assert.equal(active.length, 1)
+            assert.equal((active[0]!.data as any).error.code, 'TOOL_OUTCOME_UNKNOWN')
+            assert.equal((active[0]!.data as any).message.toolCallId, 'archived-call')
+          }
           if (scenario === 'workspace-remap') assert.ok(projection.includes('agent-continue') && projection.includes('Previous workspace') && projection.includes('Continue only in the current workspace'))
           assert.equal(fixture.unexpectedCredential, false)
           assert.ok(!notifications.some((notification) => notification.id !== undefined), 'Archived tools must not execute or request approval')

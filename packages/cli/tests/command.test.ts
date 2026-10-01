@@ -46,6 +46,34 @@ test('completed tool outputs resolve pending calls in both formats', () => {
   assert.deepEqual(execute(['inspect', '--from', 'dsh', '--input', writeDsh(root, 'pending')]).pendingOperations, [{ callId: 'synthetic-call', name: 'synthetic_tool', state: 'unknown' }])
 })
 
+test('machine-marked context notices survive inspection and migration without archived tool results', () => {
+  const root = scratch()
+  const operations = [{ callId: 'archived-call', name: 'read', state: 'unknown' }]
+  const records = codexRecords(root)
+  const user = records.find(record => record.payload.role === 'user')!
+  user.payload.recovery = 'TOOL_OUTCOME_UNKNOWN'
+  user.payload.pending_operations = operations
+  const input = join(root, 'source-marker.jsonl')
+  writeFileSync(input, records.map(record => JSON.stringify(record)).join('\n') + '\n')
+  assert.deepEqual(execute(['inspect', '--from', 'codex', '--input', input]).pendingOperations, operations)
+  const migrated = execute(migrateArgs(root, 'codex', input, join(root, 'dsh-home')))
+  const output = (migrated.output as { path: string }).path
+  assert.deepEqual(execute(['inspect', '--from', 'dsh', '--input', output]).pendingOperations, operations)
+  assert.deepEqual(execute([...reverseArgs(root, output, join(root, 'codex-home')), '--dry-run']).pendingOperations, operations)
+  assert.ok(!JSON.stringify(migrated).includes('SYNTHETIC PRIVATE QUESTION'))
+})
+
+test('an unknown marker without machine operations refuses migration rather than matching body keywords', () => {
+  const root = scratch()
+  const records = codexRecords(root)
+  const user = records.find(record => record.payload.role === 'user')!
+  user.payload.recovery = 'TOOL_OUTCOME_UNKNOWN'
+  const input = join(root, 'malformed-marker.jsonl')
+  writeFileSync(input, records.map(record => JSON.stringify(record)).join('\n') + '\n')
+  assert.throws(() => execute(migrateArgs(root, 'codex', input, join(root, 'target'))), /machine-readable pending/i)
+  assert.equal(existsSync(join(root, 'target')), false)
+})
+
 for (const custom of [false, true]) {
   test(`Codex inspect preserves explicit unknown recovery markers for ${custom ? 'custom' : 'function'} tool results`, () => {
     const root = scratch()

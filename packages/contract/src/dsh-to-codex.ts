@@ -26,7 +26,8 @@ import { isAbsolute } from 'node:path'
 import type { RolloutDraft } from '../../codex-adapter/src/rollout.ts'
 import type { JsonObject } from '../../codex-adapter/src/rollout.ts'
 import type { SessionEvent, SessionHeader } from '../../dsh-adapter/src/format.ts'
-import { RECOVERY_FIELD, TOOL_OUTCOME_UNKNOWN } from './conventions.ts'
+import { currentSurface } from '../../dsh-adapter/src/surface.ts'
+import { RECOVERY_FIELD, TOOL_OUTCOME_UNKNOWN, pendingOutcomes } from './conventions.ts'
 
 /** How one category of input was handled. */
 export interface MappingTally {
@@ -98,6 +99,8 @@ export function convertDshToCodex(
   options: ConvertOptions,
 ): ConversionResult {
   assertDshMigrationSource(header)
+  const surface = currentSurface(events)
+  const activeSequences = new Set(surface.map(event => event.seq))
   const tallies: Record<string, MappingTally> = {}
   const tally = (kind: string, outcome: 'mapped' | 'dropped', reason?: string): void => {
     const entry = tallies[kind] ?? { mapped: 0, dropped: 0 }
@@ -109,7 +112,7 @@ export function convertDshToCodex(
   const startedAt = options.startedAt ?? new Date(header.createdAt)
   const iso = (ms: number): string => new Date(ms).toISOString()
   const drafts: RolloutDraft[] = []
-  const modelSource = firstModelSource(events)
+  const modelSource = firstModelSource(surface)
   const provider = options.modelProvider ?? modelSource?.provider ?? 'unknown'
   const model = modelSource?.model ?? 'unknown'
   // Needed inside the loop for `item_completed.thread_id`, and at the end for
@@ -117,8 +120,33 @@ export function convertDshToCodex(
   const threadId = options.threadId ?? header.id
 
   let turn: TurnState | undefined
-  /** Call ids seen from `tool/call`, so a later result can be paired. */
-  const openCalls = new Map<string, string>()
+  const emittedCalls = new Map<string, JsonObject>()
+  const loggedCalls = new Map<string, SessionEvent>()
+  const advertisedCalls = new Set<string>()
+  const settledCalls = new Set<string>()
+  const owners = new Map<number, number>()
+  let sourceTurn = 1
+  for (const event of events) {
+    const data = (event.data ?? {}) as JsonObject
+    if (event.type === 'turn/start' && typeof data.turn === 'number') sourceTurn = data.turn
+    owners.set(event.seq, typeof data.turn === 'number' ? data.turn : sourceTurn)
+    if (event.type === 'tool/call') loggedCalls.set(`${owners.get(event.seq)}/${String(data.callId)}`, event)
+    if (event.type === 'tool/result') {
+      const message = (data.message ?? {}) as JsonObject
+      settledCalls.add(`${owners.get(event.seq)}/${String((message.source as JsonObject | undefined)?.callId ?? message.toolCallId ?? data.toolCallId)}`)
+    }
+    if (event.type === 'assistant/message') {
+      const message = (data.message ?? {}) as JsonObject
+      for (const block of Array.isArray(message.content) ? message.content as JsonObject[] : []) {
+        if (block.type === 'tool-call') advertisedCalls.add(`${owners.get(event.seq)}/${String(block.id)}`)
+      }
+    }
+    if (event.surfaceOp !== undefined) {
+      if (!activeSequences.has(event.seq)) tally(event.type, 'dropped', 'not in the current DSH surface; retained only in the source audit log')
+    } else if (['turn/start', 'turn/end'].includes(event.type)) tally(event.type, 'mapped')
+    else if (event.type === 'step/start' || event.type === 'step/end') tally(event.type, 'dropped', 'Codex models turns but not steps')
+    else if (event.type !== 'tool/call') tally(event.type, 'dropped', 'log-only DSH event, not current model history')
+  }
 
   const push = (type: string, payload: JsonObject, timestamp?: string): void => {
     drafts.push({ type, payload, ...(timestamp === undefined ? {} : { timestamp }) })
@@ -156,41 +184,70 @@ export function convertDshToCodex(
     return created
   }
 
-  for (const event of events) {
+  const emitCall = (data: JsonObject, owner: number, atMs: number): void => {
+    if (typeof data.callId !== 'string' || data.callId.length === 0 || typeof data.name !== 'string' || data.name.length === 0) {
+      throw new Error('Refusing migration: active DSH tool call is missing its identity')
+    }
+    const callId = String(data.callId)
+    const key = `${owner}/${callId}`
+    const identity = { name: String(data.name), arguments: typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments ?? {}) }
+    const logged = loggedCalls.get(key)?.data as JsonObject | undefined
+    if (logged !== undefined && (logged.name !== identity.name || logged.arguments !== identity.arguments)) {
+      throw new Error('Refusing migration: active tool advertisement does not match its recorded call')
+    }
+    const previous = emittedCalls.get(key)
+    if (previous !== undefined) {
+      if (previous.name !== identity.name || previous.arguments !== identity.arguments) {
+        throw new Error('Refusing migration: contradictory active tool advertisements')
+      }
+      return
+    }
+    emittedCalls.set(key, identity)
+    push('response_item', {
+      type: 'function_call', id: `fc_${callId}`, ...identity, call_id: callId,
+      internal_chat_message_metadata_passthrough: { turn_id: turn!.turnId },
+    }, iso(atMs))
+    tally('tool/call', 'mapped')
+  }
+
+  const activeCalls = new Set<string>()
+  const exportEvents = [...surface]
+  for (const event of surface) {
+    const data = (event.data ?? {}) as JsonObject
+    const message = (data.message ?? {}) as JsonObject
+    for (const block of Array.isArray(message.content) ? message.content as JsonObject[] : []) {
+      if (event.type === 'assistant/message' && block.type === 'tool-call') activeCalls.add(`${owners.get(event.seq)}/${String(block.id)}`)
+    }
+    if (event.type === 'tool/result') activeCalls.add(`${owners.get(event.seq)}/${String((message.source as JsonObject | undefined)?.callId ?? message.toolCallId ?? data.toolCallId)}`)
+  }
+  for (const [key, event] of loggedCalls) {
+    if (!advertisedCalls.has(key) && !activeCalls.has(key) && !settledCalls.has(key)) exportEvents.push(event)
+    else if (!activeCalls.has(key)) tally('tool/call', 'dropped', 'advertisement and result are outside the current DSH surface')
+  }
+
+  for (const event of exportEvents) {
     const kind = event.type
     const atMs = typeof event.time === 'number' ? event.time : header.createdAt
     const data = (event.data ?? {}) as JsonObject
+    const owner = owners.get(event.seq) ?? 1
+    if (turn !== undefined && turn.turn !== owner) closeTurn(atMs)
+    turn ??= openTurn(owner, atMs)
 
     switch (kind) {
-      case 'turn/start':
-        closeTurn(atMs)
-        turn = openTurn(typeof data.turn === 'number' ? data.turn : 1, atMs)
-        tally(kind, 'mapped')
-        break
-
-      case 'turn/end':
-        closeTurn(atMs)
-        tally(kind, 'mapped')
-        break
-
-      case 'step/start':
-      case 'step/end':
-        // Codex has no step concept; the messages inside the step carry its content.
-        tally(kind, 'dropped', 'Codex models turns but not steps')
-        break
-
       case 'user/message': {
         turn ??= openTurn(1, atMs)
         const content = toCodexContent(data.content, 'input_text')
         if (content.dropped > 0) {
           tally(CONTENT_BLOCKS, 'dropped', 'DSH content blocks with no Codex equivalent (only text survives)', content.dropped)
         }
+        const pending = pendingOutcomes(data.source)
         push('response_item', {
           type: 'message',
           id: `msg_${String(data.id ?? randomUUID())}`,
           role: 'user',
           content: content.blocks,
           internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
+          ...(pending.length === 0 ? {} : { [RECOVERY_FIELD]: TOOL_OUTCOME_UNKNOWN, pending_operations: pending }),
         }, iso(atMs))
         push('event_msg', {
           type: 'item_completed',
@@ -212,30 +269,36 @@ export function convertDshToCodex(
       case 'assistant/message': {
         turn ??= openTurn(1, atMs)
         const message = (data.message ?? {}) as JsonObject
-        const content = toCodexContent(message.content, 'output_text')
+        const content = toCodexContent(Array.isArray(message.content)
+          ? (message.content as JsonObject[]).filter(block => block.type !== 'tool-call') : message.content, 'output_text')
         if (content.dropped > 0) {
           tally(CONTENT_BLOCKS, 'dropped', 'DSH content blocks with no Codex equivalent (only text survives)', content.dropped)
         }
-        push('response_item', {
-          type: 'message',
-          id: `msg_${String(message.id ?? randomUUID())}`,
-          role: 'assistant',
-          content: content.blocks,
-          internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
-        }, iso(atMs))
-        push('event_msg', {
-          type: 'item_completed',
-          thread_id: threadId,
-          turn_id: turn.turnId,
-          item: {
-            type: 'AgentMessage',
-            id: `item_${String(message.id ?? randomUUID())}`,
-            client_id: null,
-            content: agentItemContent(content.blocks),
-          },
-          started_at_ms: atMs,
-          completed_at_ms: atMs,
-        }, iso(atMs))
+        let part = 0
+        const emitText = (blocks: JsonObject[]): void => {
+          if (blocks.length === 0) return
+          const suffix = part++ === 0 ? '' : `_part${part}`
+          push('response_item', {
+            type: 'message',
+            id: `msg_${String(message.id ?? randomUUID())}${suffix}`,
+            role: 'assistant',
+            content: blocks,
+            internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
+          }, iso(atMs))
+          push('event_msg', {
+            type: 'item_completed',
+            thread_id: threadId,
+            turn_id: turn.turnId,
+            item: {
+              type: 'AgentMessage',
+              id: `item_${String(message.id ?? randomUUID())}${suffix}`,
+              client_id: null,
+              content: agentItemContent(blocks),
+            },
+            started_at_ms: atMs,
+            completed_at_ms: atMs,
+          }, iso(atMs))
+        }
         // DSH keeps streamed fragments and per-message usage; Codex has a separate
         // usage record with thread-level counters we cannot reconstruct.
         tally(kind, 'mapped')
@@ -245,33 +308,40 @@ export function convertDshToCodex(
         if (data.usage !== undefined) {
           tally('assistant/message.usage', 'dropped', 'Codex token_usage_record needs thread-level counters; a partial record risks failing its schema')
         }
+        let group: JsonObject[] = []
+        for (const block of Array.isArray(message.content) ? message.content as JsonObject[] : []) {
+          if (block.type === 'tool-call') {
+            emitText(toCodexContent(group, 'output_text').blocks)
+            group = []
+            emitCall({ callId: block.id, name: block.name, arguments: block.arguments }, owner, atMs)
+          } else group.push(block)
+        }
+        emitText(toCodexContent(group, 'output_text').blocks)
         break
       }
 
       case 'tool/call': {
-        turn ??= openTurn(1, atMs)
-        const callId = String(data.callId ?? randomUUID())
-        const name = String(data.name ?? 'unknown')
-        openCalls.set(callId, name)
-        push('response_item', {
-          type: 'function_call',
-          id: `fc_${callId}`,
-          name,
-          arguments: typeof data.arguments === 'string' ? data.arguments : JSON.stringify(data.arguments ?? {}),
-          call_id: callId,
-          internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
-        }, iso(atMs))
-        tally(kind, 'mapped')
+        emitCall(data, owner, atMs)
         break
       }
 
       case 'tool/result': {
         turn ??= openTurn(1, atMs)
         const message = (data.message ?? {}) as JsonObject
-        const callId = String(data.toolCallId ?? message.toolCallId ?? randomUUID())
+        const callId = data.toolCallId ?? message.toolCallId
         const source = (message.source ?? {}) as JsonObject
-        const resolved = typeof source.callId === 'string' ? source.callId : callId
-        openCalls.delete(resolved)
+        const resolved = source.callId ?? callId
+        if (typeof resolved !== 'string' || resolved.length === 0 || (callId !== undefined && callId !== resolved)) {
+          throw new Error('Refusing migration: active DSH tool result is missing or contradicts its call identity')
+        }
+        const key = `${owner}/${resolved}`
+        if (!emittedCalls.has(key)) {
+          const logged = loggedCalls.get(key)
+          if (logged === undefined || advertisedCalls.has(key)) {
+            throw new Error(`Refusing migration: active tool result ${resolved} has no current advertisement`)
+          }
+          emitCall(logged.data as JsonObject, owner, atMs)
+        }
         // HANDOFF §9.2.1: an unknown outcome must survive the migration as an
         // explicit marker, or the target reads the call as settled. A plain known
         // failure keeps `isError` and gets no recovery marker.
@@ -294,10 +364,6 @@ export function convertDshToCodex(
         tally(kind, 'mapped')
         break
       }
-
-      case 'session-log-deepseek/delivery-accepted':
-        tally(kind, 'dropped', 'harness-private delivery bookkeeping')
-        break
 
       default:
         tally(kind, 'dropped', 'no Codex record corresponds to this DSH event')

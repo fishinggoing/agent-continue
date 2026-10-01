@@ -25,7 +25,7 @@ import { isAbsolute } from 'node:path'
 import type { RolloutRecord, JsonObject } from '../../codex-adapter/src/rollout.ts'
 import { toolOutputText } from '../../codex-adapter/src/rollout.ts'
 import type { SessionEvent, SessionHeader, SurfaceOp } from '../../dsh-adapter/src/format.ts'
-import { TOOL_OUTCOME_UNKNOWN, TOOL_OUTCOME_UNKNOWN_TEXT } from './conventions.ts'
+import { TOOL_OUTCOME_UNKNOWN, TOOL_OUTCOME_UNKNOWN_TEXT, pendingOutcomes } from './conventions.ts'
 
 /** How one category of input was handled. */
 export interface MappingTally {
@@ -268,12 +268,35 @@ export function convertCodexToDsh(
       case 'compacted': {
         const snapshot = compactionSnapshot(record.payload)
         const unknown = new Map<string, number>()
+        const calls = new Map<string, JsonObject>()
+        const pending = new Map<string, { callId: string; name: string; state: 'unknown' }>()
         for (const previous of events) {
-          if (previous.type !== 'tool/result') continue
           const data = previous.data as JsonObject
+          if (previous.type === 'tool/call') calls.set(String(data.callId), data)
+          if (previous.type === 'user/message') {
+            for (const operation of pendingOutcomes(data.source)) pending.set(operation.callId, operation)
+          }
+          if (previous.type !== 'tool/result') continue
           const callId = String((data.message as JsonObject).toolCallId)
-          if ((data.error as JsonObject | undefined)?.code === TOOL_OUTCOME_UNKNOWN) unknown.set(callId, previous.seq)
-          else unknown.delete(callId)
+          if ((data.error as JsonObject | undefined)?.code === TOOL_OUTCOME_UNKNOWN) {
+            unknown.set(callId, previous.seq)
+            pending.set(callId, { callId, name: String(calls.get(callId)?.name ?? 'unknown'), state: 'unknown' })
+          } else {
+            unknown.delete(callId)
+            pending.delete(callId)
+          }
+        }
+        const retained = [...snapshot]
+        for (const [callId, resultSeq] of unknown) {
+          if (snapshot.some(payload => (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') && payload.call_id === callId)) continue
+          const call = calls.get(callId)
+          if (call === undefined) throw new Error('Refusing compaction migration: unknown outcome has no recorded tool identity')
+          const result = events[resultSeq]!.data as JsonObject
+          const message = result.message as JsonObject
+          retained.push(
+            { type: 'function_call', call_id: callId, name: call.name, arguments: call.arguments },
+            { type: 'function_call_output', id: message.id, call_id: callId, output: contentText(message.content), recovery: TOOL_OUTCOME_UNKNOWN, isError: true },
+          )
         }
         if (turn !== undefined && turn.openCalls.size > 0) {
           throw new Error('Refusing compaction migration over unresolved source tool calls; their outcome cannot be inferred from a summary')
@@ -284,7 +307,7 @@ export function convertCodexToDsh(
         }
         const context = convertCodexToDsh([
           { ...records[0]!, type: 'session_meta', payload: meta! },
-          ...snapshot.map((payload, offset) => ({
+          ...retained.map((payload, offset) => ({
             type: 'response_item', ordinal: offset + 1, timestamp: record.timestamp,
             payload: (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') && unknown.has(String(payload.call_id))
               ? { ...payload, recovery: TOOL_OUTCOME_UNKNOWN, isError: true } : payload,
@@ -302,6 +325,7 @@ export function convertCodexToDsh(
           let operation = child.surfaceOp
           if (child.type === 'user/message') {
             data.source = {
+              ...data.source as JsonObject,
               kind: 'agent-continue-codex-compaction', sourceOrdinal: record.ordinal,
               ...(typeof record.payload.window_id === 'string' ? { sourceWindowId: record.payload.window_id } : {}),
             }
@@ -317,6 +341,10 @@ export function convertCodexToDsh(
           else if (child.sourceEventSeqs !== undefined) {
             appended.sourceEventSeqs = child.sourceEventSeqs.map((seq) => sequences.get(seq)!)
           }
+          if (child.type === 'tool/result') {
+            const originalSeq = unknown.get(String((data.message as JsonObject).toolCallId))
+            if (originalSeq !== undefined) appended.sourceEventSeqs = [originalSeq]
+          }
           if (typeof data.step === 'number') current.step = data.step
           if (child.type === 'step/start') current.openStep = true
           if (child.type === 'step/end') current.openStep = false
@@ -324,12 +352,12 @@ export function convertCodexToDsh(
           if (child.type === 'tool/call') current.openCalls.set(String(data.callId), appended.seq)
           if (child.type === 'tool/result') current.openCalls.delete(String((data.message as JsonObject).toolCallId))
         }
-        if (unknown.size > 0) {
+        if (pending.size > 0) {
           beginStep()
           const notice = push('user/message', {
             id: `compaction-unknown-${record.ordinal}`, role: 'user',
-            source: { kind: 'agent-continue-unknown-outcomes', sourceOrdinal: record.ordinal },
-            content: [{ type: 'text', text: `Recorded tool outcomes remain ${TOOL_OUTCOME_UNKNOWN} after compaction: ${[...unknown.keys()].join(', ')}. Check the actual workspace or external state before retrying; compaction does not prove success or failure.` }],
+            source: { kind: 'agent-continue-unknown-outcomes', sourceOrdinal: record.ordinal, recovery: TOOL_OUTCOME_UNKNOWN, pendingOperations: [...pending.values()] },
+            content: [{ type: 'text', text: `Recorded tool outcomes remain ${TOOL_OUTCOME_UNKNOWN} after compaction: ${[...pending.keys()].join(', ')}. Check the actual workspace or external state before retrying; compaction does not prove success or failure. ${TOOL_OUTCOME_UNKNOWN_TEXT}` }],
           }, 'append')
           notice.sourceEventSeqs = [...unknown.values()]
           tally('compacted.unknown-outcomes', 'mapped')
@@ -458,7 +486,8 @@ export function convertCodexToDsh(
             id: String(record.payload.id ?? `msg-${events.length}`),
             role: 'user',
             content: content.blocks,
-            source: { kind: 'user' },
+            source: { kind: 'user', ...(record.payload.recovery === TOOL_OUTCOME_UNKNOWN
+              ? { recovery: TOOL_OUTCOME_UNKNOWN, pendingOperations: pendingOutcomes(record.payload) } : {}) },
           }, 'append')
         }
         tally(kind, 'mapped')

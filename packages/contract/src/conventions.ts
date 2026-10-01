@@ -25,6 +25,38 @@ export const TOOL_OUTCOME_UNKNOWN = 'TOOL_OUTCOME_UNKNOWN'
  */
 export const RECOVERY_FIELD = 'recovery'
 
+export interface PendingOutcome {
+  callId: string
+  name: string
+  state: 'unknown'
+}
+
+export function pendingOutcomes(value: unknown): PendingOutcome[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return []
+  const metadata = value as Record<string, unknown>
+  if (metadata.recovery !== TOOL_OUTCOME_UNKNOWN) {
+    if (metadata.kind === 'agent-continue-unknown-outcomes') {
+      throw new Error('Refusing migration: unknown-outcome notice lacks a machine-readable recovery marker; reimport its original source')
+    }
+    return []
+  }
+  const operations = metadata.pendingOperations ?? metadata.pending_operations
+  if (!Array.isArray(operations) || operations.length === 0) {
+    throw new Error('Refusing migration: unknown-outcome context is missing machine-readable pending operations')
+  }
+  return operations.map(operation => {
+    if (typeof operation !== 'object' || operation === null || Array.isArray(operation)) {
+      throw new Error('Refusing migration: malformed pending operation')
+    }
+    const entry = operation as Record<string, unknown>
+    if (typeof entry.callId !== 'string' || entry.callId.length === 0
+      || typeof entry.name !== 'string' || entry.name.length === 0 || entry.state !== 'unknown') {
+      throw new Error('Refusing migration: malformed pending operation identity or state')
+    }
+    return { callId: entry.callId, name: entry.name, state: 'unknown' }
+  })
+}
+
 /**
  * The message body DSH itself writes for an interrupted-but-started call.
  *

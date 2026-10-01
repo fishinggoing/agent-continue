@@ -12,6 +12,7 @@ import { artifactPath } from '../../dsh-adapter/src/paths.ts'
 import { writeArtifact } from '../../dsh-adapter/src/write.ts'
 import { convertCodexToDsh } from '../../contract/src/codex-to-dsh.ts'
 import { assertDshMigrationSource, convertDshToCodex } from '../../contract/src/dsh-to-codex.ts'
+import { pendingOutcomes } from '../../contract/src/conventions.ts'
 
 type Harness = 'codex' | 'dsh'
 type Source = { kind: 'codex'; records: RolloutRecord[] } | { kind: 'dsh'; header: SessionHeader; events: SessionEvent[] }
@@ -109,6 +110,9 @@ function pendingOperations(source: Source): PendingOperation[] {
     for (const record of source.records) {
       if (record.type !== 'response_item') continue
       const payload = record.payload
+      if (payload.type === 'message') {
+        for (const operation of pendingOutcomes(payload)) pending.set(operation.callId, operation)
+      }
       const callId = typeof payload.call_id === 'string' ? payload.call_id : undefined
       if (callId === undefined) continue
       if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
@@ -122,6 +126,9 @@ function pendingOperations(source: Source): PendingOperation[] {
   } else {
     for (const event of source.events) {
       const data = object(event.data)
+      if (event.type === 'user/message') {
+        for (const operation of pendingOutcomes(data.source)) pending.set(operation.callId, operation)
+      }
       if (event.type === 'tool/call' && typeof data.callId === 'string') {
         pending.set(data.callId, { callId: data.callId, name: String(data.name ?? 'unknown'), state: 'unknown' })
       } else if (event.type === 'tool/result') {

@@ -105,7 +105,9 @@ const { header: h, events: e, tallies: t, losses: l } = convertCodexToDsh(record
 `assistant/message.source` 用 **Codex 原值**（`model_provider` / `turn_context.model`），
 不替换成 DSH 的 provider —— 记录"这条消息实际由谁产生"才是诚实的。
 
-迁入时保留一个内容为空的 DSH 系统首节点，带显式 migration 标记，由当前 DSH 进程替换；不是复制外来提示或捏造 DSH 指令。压缩不能覆盖该节点。已明确记录的 `TOOL_OUTCOME_UNKNOWN` 在压缩后仍以带来源引用的上下文提醒保留，不能因摘要没有提及就当作成功。工作区重映射额外投递真实的新旧目录状态，不改写历史路径、不复制工程文件。DSH → Codex 的 surface replacement 尚未实现等价投递，本次不能据此宣称双向压缩无损。
+迁入时保留一个内容为空的 DSH 系统首节点，带显式 migration 标记，由当前 DSH 进程替换；不是复制外来提示或捏造 DSH 指令。压缩不能覆盖该节点。已明确记录的 `TOOL_OUTCOME_UNKNOWN` 保留当前曲面上的工具身份、结果正文与错误码；摘要遗漏未知工具时，保留其记录中的调用/结果对，不执行它。另附带来源引用、`recovery` 与 `pendingOperations` 的上下文提醒，不能因摘要没有提及就当作成功。工作区重映射额外投递真实的新旧目录状态，不改写历史路径、不复制工程文件。
+
+DSH → Codex 按当前曲面位置派生，不按原始日志或 seq 排序。支持连续替换、系统首节点替换及仅修改正文的工具结果原地替换；归档正文与已遮蔽工具对不进入模型输入，原始 DSH 日志不改写。`sourceEventSeqs` 只作溯源。缺失解释器的投影（包括 `image/offload`）、非法替换和没有机器标记的旧 unknown notice 会明确拒绝；后者应从原始源重新导入，不能手改产物验收。非文本块、外来系统/开发者提示和两侧运行权限仍有显式损失，不宣称双向上下文完全无损。
 
 ### DSH → Codex
 
