@@ -10,6 +10,7 @@ import { parseSessionLog } from '../../dsh-adapter/src/format.ts'
 import { readFrames } from '../../dsh-adapter/src/zstd.ts'
 import { activeEvents } from '../../contract/tests/compaction-fixture.ts'
 import { LONG_CONTEXT_MEMO, longContextTurns } from './long-context.ts'
+import { createQuotaProxy } from './quota-proxy.ts'
 
 if (process.env.AGENT_CONTINUE_LIVE !== '1') throw new Error('Real model calls require AGENT_CONTINUE_LIVE=1')
 const repository = resolve(import.meta.dirname, '../../..')
@@ -23,6 +24,7 @@ const resumeRoot = process.env.AGENT_CONTINUE_LIVE_RESUME
 const verifyOnly = process.env.AGENT_CONTINUE_LIVE_VERIFY_ONLY === '1'
 assert.ok(!verifyOnly || resumeRoot, 'Verification-only mode requires an existing isolated run')
 const compactBeforeInterruption = process.env.AGENT_CONTINUE_LIVE_COMPACT === '1'
+const quotaRefusal = process.env.AGENT_CONTINUE_LIVE_QUOTA_REFUSAL === '1'
 const longContext = process.env.AGENT_CONTINUE_LIVE_LONG_CONTEXT === '1'
 const autoCompactLimit = Number(process.env.AGENT_CONTINUE_LIVE_AUTO_COMPACT_LIMIT ?? '22000')
 assert.ok(!longContext || Number.isSafeInteger(autoCompactLimit) && autoCompactLimit >= 12_000 && autoCompactLimit <= 60_000, 'Long-context auto-compaction limit must be an integer from 12000 to 60000')
@@ -195,16 +197,6 @@ const task = [
 ].join('\n')
 const sourceHome = join(root, 'codex-home')
 prepareHome(sourceHome)
-if (!resumeRoot) {
-writeFileSync(join(sourceHome, 'auth.json'), JSON.stringify(auth.auth), { mode: 0o600 })
-writeFileSync(join(sourceHome, 'config.toml'), [
-  `model = ${JSON.stringify(auth.model)}`, `model_provider = ${JSON.stringify(auth.provider)}`,
-  'model_reasoning_effort = "low"', 'approval_policy = "never"', 'sandbox_mode = "danger-full-access"',
-  ...(longContext ? [`model_auto_compact_token_limit = ${autoCompactLimit}`] : []),
-  `[model_providers.${auth.provider}]`,
-  ...Object.entries(auth.route).map(([key, value]) => `${key} = ${JSON.stringify(value)}`), '',
-].join('\n'))
-}
 evidence.codexVersion = execFileSync(binary, ['--version'], { encoding: 'utf8', windowsHide: true }).trim()
 if (!verifyOnly) evidence.codexAuthMode = auth.auth.auth_mode
 evidence.codexModel = auth.model
@@ -215,13 +207,30 @@ evidence.binaryHashes = { codex: hash(binary), dshLauncher: hash(dshBinary) }
 if (!resumeRoot) evidence.sourceBuild = {
   runnerHash: evidence.runnerHash, implementationHashes: evidence.implementationHashes,
   longContextFixtureHash: longContext ? hash(join(import.meta.dirname, 'long-context.ts')) : undefined,
+  quotaProxyFixtureHash: quotaRefusal ? hash(join(import.meta.dirname, 'quota-proxy.ts')) : undefined,
 }
 persist()
 console.log(`Isolated evidence: ${root}`)
 let codex: RpcClient | undefined
 let dsh: RpcClient | undefined
+let quotaProxy: Awaited<ReturnType<typeof createQuotaProxy>> | undefined
 try {
   if (!resumeRoot) {
+  if (quotaRefusal) {
+    assert.equal(auth.route.wire_api, 'responses', 'Quota-refusal fixture requires a Responses provider')
+    quotaProxy = await createQuotaProxy(auth.route.base_url)
+    evidence.quotaRefusal = { injectedLocally: true, actualSubscriptionExhaustion: false, interruptRequests: 0 }
+    evidence.simulatedInterruption = false
+  }
+  const route = quotaProxy ? { ...auth.route, base_url: quotaProxy.baseUrl, request_max_retries: 0, stream_max_retries: 0 } : auth.route
+  writeFileSync(join(sourceHome, 'auth.json'), JSON.stringify(auth.auth), { mode: 0o600 })
+  writeFileSync(join(sourceHome, 'config.toml'), [
+    `model = ${JSON.stringify(auth.model)}`, `model_provider = ${JSON.stringify(auth.provider)}`,
+    'model_reasoning_effort = "low"', 'approval_policy = "never"', 'sandbox_mode = "danger-full-access"',
+    ...(longContext ? [`model_auto_compact_token_limit = ${autoCompactLimit}`] : []),
+    `[model_providers.${auth.provider}]`,
+    ...Object.entries(route).map(([key, value]) => `${key} = ${JSON.stringify(value)}`), '',
+  ].join('\n'))
   codex = new RpcClient(binary, ['app-server', '--listen', 'stdio://'], environment(sourceHome), work, 'codex')
   await codex.call('initialize', { clientInfo: { name: 'agent_continue_live_acceptance', version: '0.0.1' }, capabilities: { experimentalApi: true } })
   codex.send({ jsonrpc: '2.0', method: 'initialized', params: {} })
@@ -267,12 +276,27 @@ try {
     persist()
     assert.ok(compacted.length > 0, 'Real native compaction must persist before testing compacted continuation')
   }
+  quotaProxy?.denyQuota()
   const followup = await codex.call('turn/start', { threadId, input: [{ type: 'text', text: 'Continue with the remaining stage now. First run the existing smoke tests before editing anything.' }] })
-  const boundary = await codex.wait((message) => message.method === 'item/started' && message.params?.turnId === followup.turn.id && message.params?.item?.type === 'commandExecution', 90_000)
-  evidence.interruptionItem = boundary.params.item.type
-  await codex.call('turn/interrupt', { threadId, turnId: followup.turn.id }, 30_000)
-  const aborted = await codex.wait((message) => message.method === 'turn/completed' && message.params?.turn?.id === followup.turn.id, 30_000)
-  assert.equal(aborted.params.turn.status, 'interrupted')
+  if (quotaProxy) {
+    const failed = await codex.wait((message) => message.method === 'turn/completed' && message.params?.turn?.id === followup.turn.id, 90_000)
+    assert.equal(failed.params.turn.status, 'failed', 'Quota fixture must fail natively, not be interrupted by the runner')
+    assert.match(JSON.stringify(failed.params.turn.error), /quota|429|rateLimit|usageLimit/i)
+    const receipt = quotaProxy.snapshot()
+    assert.ok(receipt.observations.some((item) => item.phase === 'forwarded' && item.statusCode === 200), 'First-stage implementation must use the real upstream model')
+    assert.ok(receipt.observations.some((item) => item.phase === 'quota-refused'))
+    assert.equal(codex.notifications.some((message) => message.method === 'item/started' && message.params?.turnId === followup.turn.id && ['commandExecution', 'fileChange'].includes(message.params?.item?.type)), false)
+    evidence.quotaRefusal = { ...evidence.quotaRefusal, ...receipt, nativeTurnStatus: failed.params.turn.status,
+      nativeError: failed.params.turn.error, rejectedTurnId: followup.turn.id }
+    await quotaProxy.close()
+    quotaProxy = undefined
+  } else {
+    const boundary = await codex.wait((message) => message.method === 'item/started' && message.params?.turnId === followup.turn.id && message.params?.item?.type === 'commandExecution', 90_000)
+    evidence.interruptionItem = boundary.params.item.type
+    await codex.call('turn/interrupt', { threadId, turnId: followup.turn.id }, 30_000)
+    const aborted = await codex.wait((message) => message.method === 'turn/completed' && message.params?.turn?.id === followup.turn.id, 30_000)
+    assert.equal(aborted.params.turn.status, 'interrupted')
+  }
   await codex.close()
   codex = undefined
   evidence.unchangedAtInterruption = hash(join(work, 'src/ledger.mjs')) === evidence.checkpointHash
@@ -442,7 +466,7 @@ try {
     }
     result.explicitToolPathsStayedInWorkspace = true
     result.promptFinishedNormally = result.prompt?.stopReason === 'end_turn'
-    if (evidence.longContext) assert.equal(result.promptFinishedNormally, true, 'Long-context real continuation requires normal completion, not cancellation at the response cap')
+    if (evidence.longContext || evidence.quotaRefusal) assert.equal(result.promptFinishedNormally, true, 'Boundary continuation requires normal completion, not cancellation at the response cap')
     result.handoffDocumentCreated = files(cwd).some((path) => /handoff.*\.md$/i.test(basename(path)))
     assert.equal(result.handoffDocumentCreated, false)
     result.accepted = true
@@ -462,6 +486,10 @@ try {
 } finally {
   if (codex) await codex.close()
   if (dsh) await dsh.close()
+  if (quotaProxy) {
+    evidence.quotaRefusal = { ...evidence.quotaRefusal, ...quotaProxy.snapshot() }
+    await quotaProxy.close()
+  }
   rmSync(join(sourceHome, 'auth.json'), { force: true })
   evidence.finishedAt = new Date().toISOString()
   persist()
