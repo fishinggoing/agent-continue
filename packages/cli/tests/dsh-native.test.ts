@@ -11,7 +11,7 @@ import { writeArtifact } from '../../dsh-adapter/src/write.ts'
 import { CONVERSATION_TEXTS, codexConversation, codexRecords, dshLog } from './fixtures.ts'
 import { withRpcServer } from './native.ts'
 
-for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'native-completed-control', 'native-interrupted-control'] as const) {
+for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'interrupted-tool-followed-by-turn', 'native-completed-control', 'native-interrupted-control', 'native-interrupted-followup-control'] as const) {
   test(`DSH native restoration: ${scenario}`, { timeout: 90_000 }, async (context) => {
     const binary = process.env.AGENT_CONTINUE_DSH_CLI
     const probeRoot = process.env.AGENT_CONTINUE_NATIVE_ROOT
@@ -37,18 +37,39 @@ for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'native
     })
     assert.equal(configured.status, 0, 'Isolated ACP profile initialization succeeds without user credentials')
     const records = scenario === 'multi-turn-completed-tool' ? codexConversation(root) : codexRecords(root, 'pending')
-    if (scenario === 'interrupted-tool') {
+    if (scenario === 'interrupted-tool' || scenario === 'interrupted-tool-followed-by-turn') {
       const callIndex = records.findIndex((record) => record.payload.type === 'function_call')
       records.splice(callIndex + 1)
+      if (scenario === 'interrupted-tool-followed-by-turn') {
+        records.push({ timestamp: records[0]!.timestamp, type: 'event_msg', payload: { type: 'turn_aborted', turn_id: 'synthetic-turn' } })
+        const followup = codexRecords(root).slice(1)
+        for (const record of followup) {
+          if (record.payload.turn_id !== undefined) record.payload.turn_id = 'synthetic-followup-turn'
+          if (record.payload.type === 'message') {
+            record.payload.content = [{ type: record.payload.role === 'user' ? 'input_text' : 'output_text', text: record.payload.role === 'user' ? 'SYNTHETIC FOLLOW-UP QUESTION' : 'SYNTHETIC FOLLOW-UP ANSWER' }]
+          }
+        }
+        records.push(...followup)
+      }
     }
     const input = join(root, 'source-rollout.jsonl')
-    writeFileSync(input, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+    writeFileSync(input, `${records.map((record, ordinal) => JSON.stringify({ ...record, ordinal })).join('\n')}\n`)
     const id = randomUUID()
     const nativeControl = scenario.startsWith('native-')
     const interrupted = scenario.includes('interrupted')
+    const followed = scenario === 'interrupted-tool-followed-by-turn' || scenario === 'native-interrupted-followup-control'
     let output: { path: string }
     if (nativeControl) {
-      const source = dshLog(root, interrupted ? 'pending' : 'completed', 1790730000000, interrupted ? undefined : CONVERSATION_TEXTS)
+      const source = scenario === 'native-interrupted-followup-control'
+        ? dshLog(root, 'completed', 1790730000000, ['SYNTHETIC PRIVATE QUESTION', 'SYNTHETIC PRIVATE ANSWER', 'SYNTHETIC FOLLOW-UP QUESTION', 'SYNTHETIC FOLLOW-UP ANSWER'])
+        : dshLog(root, interrupted ? 'pending' : 'completed', 1790730000000, interrupted ? undefined : CONVERSATION_TEXTS)
+      if (scenario === 'native-interrupted-followup-control') {
+        const result = source.events.find((event) => event.type === 'tool/result')!
+        const data = result.data as { error?: { name: string; code: string }; message: { isError: boolean; content: { type: string; text: string }[] } }
+        data.error = { name: 'ToolOutcomeUnknownError', code: 'TOOL_OUTCOME_UNKNOWN' }
+        data.message.isError = true
+        data.message.content = [{ type: 'text', text: 'Synthetic recorded call was interrupted; its outcome remains unknown.' }]
+      }
       output = writeArtifact(join(home, 'sessions'), { ...source.header, id }, source.events)
     } else {
       const report = execute(['migrate', '--from', 'codex', '--input', input, '--cwd', root, '--target-home', home, '--id', id])
@@ -66,7 +87,9 @@ for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'native
       assert.equal(restored.events.filter((event) => event.type === 'turn/start').length, 2)
       assert.equal(restored.events.filter((event) => event.type === 'tool/result').length, 1)
     } else {
-      assert.equal(restored.events.filter((event) => event.type === 'tool/result').length, 0)
+      if (followed) {
+        assert.ok(restoredText.includes('SYNTHETIC FOLLOW-UP QUESTION') && restoredText.includes('SYNTHETIC FOLLOW-UP ANSWER'), 'Migration preserves the turn after the interrupted operation')
+      } else assert.equal(restored.events.filter((event) => event.type === 'tool/result').length, 0)
       assert.ok(restoredText.includes('SYNTHETIC PRIVATE QUESTION'))
     }
     await withRpcServer('cmd.exe', ['/d', '/c', binary, profile], env, root, async (call, notifications) => {
@@ -81,6 +104,11 @@ for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'native
       assert.ok(!notifications.some((notification) => notification.id !== undefined), 'No historical tool execution or approval request is issued during native recovery')
     })
     const after = parseSessionLog(readFrames(readFileSync(output.path)).text, 4)
+    if (followed) {
+      const afterText = JSON.stringify(after.events)
+      assert.ok(afterText.includes('SYNTHETIC FOLLOW-UP QUESTION') && afterText.includes('SYNTHETIC FOLLOW-UP ANSWER'))
+      assert.equal(after.events.filter((event) => event.type === 'turn/start').length, 2)
+    }
     const results = after.events.filter((event) => event.type === 'tool/result')
     assert.equal(results.length, 1, 'Native recovery preserves the completed result or records an unknown-outcome repair')
     if (interrupted) {
