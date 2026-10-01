@@ -55,6 +55,7 @@ export async function auditCombinedHandoff(repository: string, runRoot: string) 
   const source = parseRollout(readFileSync(original, 'utf8'))
   assert.equal(source.failures.length, 0)
   assert.equal(source.records[0]!.payload.id, evidence.sourceThread)
+  assert.equal(realpathSync(evidence['same-workspace'].cwd), realpathSync(String(source.records[0]!.payload.cwd)), 'Same-workspace proof must use the actual source cwd, not a relocated retry')
   const compactions = source.records.filter(record => record.type === 'compacted')
   assert.ok(compactions.length >= 2)
   assert.equal(compactions.length, evidence.longContext.automaticCompactions)
@@ -94,8 +95,13 @@ export async function auditCombinedHandoff(repository: string, runRoot: string) 
     assert.deepEqual(result.implementationHashes, evidence.sourceBuild.implementationHashes)
     assert.equal(result.runnerHash, evidence.sourceBuild.runnerHash)
     const cwd = scoped(result.cwd)
+    assert.equal(result.startingCodeHash, evidence.checkpointHash)
+    const targetHome = scoped(result.migration.target.home)
     const artifact = scoped(result.migration.output.path)
+    assert.ok(contains(join(targetHome, 'sessions'), artifact))
     const imported = parseSessionLog(readFrames(readFileSync(artifact)).text, 4)
+    assert.equal(imported.header.id, result.sessionId)
+    assert.equal(realpathSync(imported.header.cwd), cwd)
     const converted = convertCodexToDsh(source.records, { sessionId: result.sessionId, cwd })
     assert.deepEqual(imported.events.slice(0, converted.events.length), converted.events, 'Migrated source prefix remains unmodified by continuation')
     const current = activeEvents(converted.events)
@@ -133,7 +139,9 @@ export async function auditCombinedHandoff(repository: string, runRoot: string) 
       finalDialogueRequirementFollowed: true, restartedWithoutToolReplay: true, finalCodeHash: result.finalCodeHash })
   }
   assert.notEqual(evidence['same-workspace'].cwd, evidence['relocated-workspace'].cwd)
+  assert.notEqual(evidence['same-workspace'].migration.target.home, evidence['relocated-workspace'].migration.target.home)
   return { sourceCommit: evidence.commit, sourceHash: evidence.sourceHash, checkpointHash: evidence.checkpointHash,
+    auditRunnerHash: hashFile(import.meta.filename),
     runnerHash: evidence.sourceBuild.runnerHash, binaryHashes: evidence.binaryHashes, codexVersion: evidence.codexVersion,
     codexModel: evidence.codexModel, codexAuthMode: evidence.codexAuthMode, sourceBuild: evidence.sourceBuild,
     automaticCompactions: compactions.map(record => ({ ordinal: record.ordinal, finalDecisionPresent: JSON.stringify(record.payload.replacement_history).includes(LONG_CONTEXT_MEMO) })),
