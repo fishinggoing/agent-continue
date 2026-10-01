@@ -21,6 +21,7 @@
  * Nothing is invented. Where Codex holds text this mapping cannot decode, the
  * record is dropped and counted rather than replaced with a placeholder.
  */
+import { isAbsolute } from 'node:path'
 import type { RolloutRecord, JsonObject } from '../../codex-adapter/src/rollout.ts'
 import { toolOutputText } from '../../codex-adapter/src/rollout.ts'
 import type { SessionEvent, SessionHeader } from '../../dsh-adapter/src/format.ts'
@@ -97,6 +98,13 @@ export function convertCodexToDsh(
   records: readonly RolloutRecord[],
   options: ConvertOptions,
 ): ConversionResult {
+  const meta = records.find((record) => record.type === 'session_meta')?.payload
+  if (typeof meta?.cwd !== 'string' || !isAbsolute(meta.cwd)) {
+    throw new Error('Refusing migration: Codex source cwd must be an absolute path; --cwd remapping does not override source eligibility')
+  }
+  if (typeof options.cwd !== 'string' || !isAbsolute(options.cwd)) {
+    throw new Error('Refusing migration: DSH target cwd must be an absolute path for ACP visibility')
+  }
   const tallies: Record<string, MappingTally> = {}
   const tally = (kind: string, outcome: 'mapped' | 'dropped', reason?: string, count = 1): void => {
     const entry = tallies[kind] ?? { mapped: 0, dropped: 0 }
@@ -105,7 +113,6 @@ export function convertCodexToDsh(
     tallies[kind] = entry
   }
 
-  const meta = records.find((record) => record.type === 'session_meta')?.payload
   const provider = typeof meta?.model_provider === 'string' ? meta.model_provider : 'unknown'
   const createdAt = options.createdAt
     ?? (Date.parse(String(records[0]?.timestamp ?? '')) || Date.now())

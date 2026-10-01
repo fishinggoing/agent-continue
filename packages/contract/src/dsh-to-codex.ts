@@ -21,6 +21,7 @@
  * Measured source: a real DSH store at `$DSH_HOME/sessions`.
  */
 import { randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
 
 import type { RolloutDraft } from '../../codex-adapter/src/rollout.ts'
 import type { JsonObject } from '../../codex-adapter/src/rollout.ts'
@@ -72,6 +73,18 @@ interface TurnState {
   startedAtMs: number
 }
 
+export function assertDshMigrationSource(header: SessionHeader): void {
+  if (header.origin === 'subagent') {
+    throw new Error('Refusing migration: DSH subagent sources are excluded from ACP session/list and session/resume')
+  }
+  if (header.parentSession !== undefined) {
+    throw new Error('Refusing migration: DSH forked sources with parentSession are excluded from ACP session/list and session/resume')
+  }
+  if (typeof header.cwd !== 'string' || !isAbsolute(header.cwd)) {
+    throw new Error('Refusing migration: DSH source cwd must be an absolute path for ACP visibility; --cwd remapping does not override source eligibility')
+  }
+}
+
 /**
  * Convert a DSH session into Codex rollout drafts.
  * @param header - the session header.
@@ -84,6 +97,7 @@ export function convertDshToCodex(
   events: readonly SessionEvent[],
   options: ConvertOptions,
 ): ConversionResult {
+  assertDshMigrationSource(header)
   const tallies: Record<string, MappingTally> = {}
   const tally = (kind: string, outcome: 'mapped' | 'dropped', reason?: string): void => {
     const entry = tallies[kind] ?? { mapped: 0, dropped: 0 }

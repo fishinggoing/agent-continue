@@ -33,6 +33,12 @@ const { header: h, events: e, tallies: t, losses: l } = convertCodexToDsh(record
 
 `losses` 是给人看的丢失清单，`tallies` 是逐类计数。**两者都应当随迁移结果一起呈现**。
 
+## 迁移准入（D16）
+
+两个转换入口要求源 `cwd` 是本机绝对路径；Codex → DSH 还要求目标 `cwd` 是绝对路径。DSH → Codex 拒绝 `origin === 'subagent'` 或已设置 `parentSession` 的源，不静默剥离子会话身份。`assertDshMigrationSource(header)` 与 CLI 共用，必须先校验原始头部，再做工程目录重映射。拒绝采用明确异常，不返回貌似成功的转换结果；只读检查与底层格式解析仍然允许这些源。
+
+这是项目的保守准入策略：DSH ACP 的 list/resume 排除子会话，当前原生进程也拒绝缺失与已覆盖的相对 cwd（含 `.`）；并非声称 Codex 格式无法单独展开子会话。只有普通顶层、绝对 cwd 的产物属于本项目承诺的原生列表与恢复路径，格式解析通过不代表满足这个条件。
+
 ---
 
 ## 不可迁移字段与丢失项（完整清单）

@@ -11,7 +11,7 @@ import { readFrames } from '../../dsh-adapter/src/zstd.ts'
 import { artifactPath } from '../../dsh-adapter/src/paths.ts'
 import { writeArtifact } from '../../dsh-adapter/src/write.ts'
 import { convertCodexToDsh } from '../../contract/src/codex-to-dsh.ts'
-import { convertDshToCodex } from '../../contract/src/dsh-to-codex.ts'
+import { assertDshMigrationSource, convertDshToCodex } from '../../contract/src/dsh-to-codex.ts'
 
 type Harness = 'codex' | 'dsh'
 type Source = { kind: 'codex'; records: RolloutRecord[] } | { kind: 'dsh'; header: SessionHeader; events: SessionEvent[] }
@@ -172,6 +172,7 @@ export function execute(args: readonly string[]): CommandReport {
   if (command === 'inspect') {
     return { command, source: { harness: from, path: input, records: count, cwd: sourceCwd }, pendingOperations: pending, toolsExecuted: 0 }
   }
+  if (source.kind === 'dsh') assertDshMigrationSource(source.header)
   const cwd = absoluteDirectory(required(flags, 'cwd'), true)
   const home = absoluteDirectory(required(flags, 'target-home'), false)
   const sessionId = flags.get('id') ?? randomUUID()

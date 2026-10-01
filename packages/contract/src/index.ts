@@ -13,6 +13,7 @@ export {
 } from './codex-to-dsh.ts'
 
 export {
+  assertDshMigrationSource,
   convertDshToCodex,
   type ConversionResult as DshToCodexResult,
   type ConvertOptions as DshToCodexOptions,
