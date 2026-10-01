@@ -1,0 +1,11 @@
+{
+  "name": "@agent-continue/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Explicit, non-replaying native session migration between Codex and DSH",
+  "engines": { "node": ">=24.12" },
+  "exports": { ".": "./src/index.ts" },
+  "bin": { "agent-continue": "./src/main.ts" },
+  "scripts": { "test": "node --test \"tests/**/*.test.ts\"" }
+}
