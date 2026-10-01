@@ -24,7 +24,7 @@
 import { isAbsolute } from 'node:path'
 import type { RolloutRecord, JsonObject } from '../../codex-adapter/src/rollout.ts'
 import { toolOutputText } from '../../codex-adapter/src/rollout.ts'
-import type { SessionEvent, SessionHeader } from '../../dsh-adapter/src/format.ts'
+import type { SessionEvent, SessionHeader, SurfaceOp } from '../../dsh-adapter/src/format.ts'
 import { TOOL_OUTCOME_UNKNOWN, TOOL_OUTCOME_UNKNOWN_TEXT } from './conventions.ts'
 
 /** How one category of input was handled. */
@@ -118,6 +118,7 @@ export function convertCodexToDsh(
     ?? (Date.parse(String(records[0]?.timestamp ?? '')) || Date.now())
 
   const events: SessionEvent[] = []
+  const surface: number[] = []
   let turn: TurnState | undefined
   let turnCount = 0
   let fallbackModel = 'unknown'
@@ -147,10 +148,18 @@ export function convertCodexToDsh(
     startsAtOrAfter[i] = startsAtOrAfter[i + 1]! + (isStart ? 1 : 0)
   }
 
-  const push = (type: string, data: JsonObject, surfaceOp?: 'append'): void => {
+  const push = (type: string, data: JsonObject, surfaceOp?: SurfaceOp): SessionEvent => {
     const event: SessionEvent = { type, seq: events.length, time: eventTime(records, events.length, createdAt), data }
     if (surfaceOp !== undefined) event.surfaceOp = surfaceOp
     events.push(event)
+    if (surfaceOp === 'append') surface.push(event.seq)
+    else if (surfaceOp !== undefined) {
+      const first = surface.indexOf(surfaceOp.startSeq)
+      const last = surface.indexOf(surfaceOp.endSeq)
+      if (first < 0 || last < first) throw new Error('Invalid compaction replacement range')
+      surface.splice(first, last - first + 1, event.seq)
+    }
+    return event
   }
 
   const closeStep = (): void => {
@@ -233,6 +242,13 @@ export function convertCodexToDsh(
       current.lastAssistantSeen = false
       push('step/start', { turn: current.turn, step: current.step })
       current.openStep = true
+      if (surface.length === 0) {
+        push('system/message', {
+          turn: current.turn, step: current.step,
+          message: { id: `empty-system-head-${options.sessionId}`, role: 'system', content: [], source: { kind: 'system-prompt', migration: 'agent-continue-empty-system-head' } },
+        }, 'append')
+        tally('system/message.empty-head', 'mapped')
+      }
     }
     return current
   }
@@ -243,11 +259,93 @@ export function convertCodexToDsh(
     // A turn was left open for DSH recovery; no further turn may be opened, so
     // the rest of the rollout is unrepresentable.
     if (stopped) {
+      if (record.type === 'compacted') throw new Error('Refusing compaction migration after an unresolved source tail')
       if (stoppedAtIndex < 0) stoppedAtIndex = index
       continue
     }
     const kind = kindOf(record)
     switch (kind) {
+      case 'compacted': {
+        const snapshot = compactionSnapshot(record.payload)
+        const unknown = new Map<string, number>()
+        for (const previous of events) {
+          if (previous.type !== 'tool/result') continue
+          const data = previous.data as JsonObject
+          const callId = String((data.message as JsonObject).toolCallId)
+          if ((data.error as JsonObject | undefined)?.code === TOOL_OUTCOME_UNKNOWN) unknown.set(callId, previous.seq)
+          else unknown.delete(callId)
+        }
+        if (turn !== undefined && turn.openCalls.size > 0) {
+          throw new Error('Refusing compaction migration over unresolved source tool calls; their outcome cannot be inferred from a summary')
+        }
+        closeTurn({ kind: 'interrupted' })
+        if (!openTurn(`compaction-${record.ordinal}`, Date.parse(record.timestamp) || createdAt)) {
+          throw new Error('Refusing compaction migration after an unresolved source tail')
+        }
+        const context = convertCodexToDsh([
+          { ...records[0]!, type: 'session_meta', payload: meta! },
+          ...snapshot.map((payload, offset) => ({
+            type: 'response_item', ordinal: offset + 1, timestamp: record.timestamp,
+            payload: (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') && unknown.has(String(payload.call_id))
+              ? { ...payload, recovery: TOOL_OUTCOME_UNKNOWN, isError: true } : payload,
+          })),
+        ], { ...options, cwd: meta.cwd })
+        const current = turn!
+        const shadowed = surface.filter((seq) => events[seq]!.type !== 'system/message')
+        const sequences = new Map<number, number>()
+        let firstSurface = true
+        for (const child of context.events) {
+          if (child.type === 'turn/start' || child.type === 'turn/end') continue
+          if (child.type === 'system/message' && surface.length > 0) continue
+          const data = { ...child.data as JsonObject }
+          if (data.turn !== undefined) data.turn = current.turn
+          let operation = child.surfaceOp
+          if (child.type === 'user/message') {
+            data.source = {
+              kind: 'agent-continue-codex-compaction', sourceOrdinal: record.ordinal,
+              ...(typeof record.payload.window_id === 'string' ? { sourceWindowId: record.payload.window_id } : {}),
+            }
+          }
+          if (operation !== undefined && child.type !== 'system/message' && firstSurface) {
+            if (child.type !== 'user/message') throw new Error('Compaction context must start with a user message')
+            if (shadowed.length > 0) operation = { op: 'replace', startSeq: shadowed[0]!, endSeq: shadowed.at(-1)! }
+            firstSurface = false
+          }
+          const appended = push(child.type, data, operation)
+          sequences.set(child.seq, appended.seq)
+          if (operation !== undefined && operation !== 'append') appended.sourceEventSeqs = shadowed
+          else if (child.sourceEventSeqs !== undefined) {
+            appended.sourceEventSeqs = child.sourceEventSeqs.map((seq) => sequences.get(seq)!)
+          }
+          if (typeof data.step === 'number') current.step = data.step
+          if (child.type === 'step/start') current.openStep = true
+          if (child.type === 'step/end') current.openStep = false
+          if (child.type === 'assistant/message') current.lastAssistantSeen = true
+          if (child.type === 'tool/call') current.openCalls.set(String(data.callId), appended.seq)
+          if (child.type === 'tool/result') current.openCalls.delete(String((data.message as JsonObject).toolCallId))
+        }
+        if (unknown.size > 0) {
+          beginStep()
+          const notice = push('user/message', {
+            id: `compaction-unknown-${record.ordinal}`, role: 'user',
+            source: { kind: 'agent-continue-unknown-outcomes', sourceOrdinal: record.ordinal },
+            content: [{ type: 'text', text: `Recorded tool outcomes remain ${TOOL_OUTCOME_UNKNOWN} after compaction: ${[...unknown.keys()].join(', ')}. Check the actual workspace or external state before retrying; compaction does not prove success or failure.` }],
+          }, 'append')
+          notice.sourceEventSeqs = [...unknown.values()]
+          tally('compacted.unknown-outcomes', 'mapped')
+        }
+        for (const [childKind, counts] of Object.entries(context.tallies)) {
+          if (childKind === 'session_meta') continue
+          if (counts.mapped > 0) tally(`compacted.context/${childKind}`, 'mapped', undefined, counts.mapped)
+          if (counts.dropped > 0) tally(`compacted.context/${childKind}`, 'dropped', counts.reason, counts.dropped)
+        }
+        tally(kind, 'mapped')
+        if (Object.keys(record.payload).some((key) => key !== 'message' && key !== 'replacement_history')) {
+          tally('compacted.metadata', 'dropped', 'Codex window lineage, retained-context annotations and resume/token bookkeeping are not DSH native state')
+        }
+        break
+      }
+
       case 'session_meta':
         tally(kind, 'mapped')
         break
@@ -463,6 +561,20 @@ export function convertCodexToDsh(
   }
   closeTurn({ kind: 'interrupted' })
 
+  if (options.cwd !== meta.cwd) {
+    if (surface.length === 0) {
+      ensureTurn(createdAt)
+      beginStep()
+    }
+    push('user/message', {
+      id: `workspace-remap-${options.sessionId}`, role: 'user',
+      source: { kind: 'agent-continue-workspace-remap', fromCwd: meta.cwd, toCwd: options.cwd },
+      content: [{ type: 'text', text: `This imported conversation has moved workspaces. Current workspace: ${JSON.stringify(options.cwd)}. Previous workspace: ${JSON.stringify(meta.cwd)}. Earlier absolute paths and tool working directories are historical references, not the current execution location. Continue only in the current workspace; do not read, write or run commands in the previous workspace. Resolve project-relative paths against the current workspace and inspect its actual files before continuing. Migration does not copy project files.` }],
+    }, 'append')
+    tally('workspace.remapped-context', 'mapped')
+    closeTurn({ kind: 'interrupted' })
+  }
+
   if (stoppedAtIndex >= 0) {
     // Reported as one loss rather than one per record: the cause is a single
     // decision (stop at the open tail), not many independent omissions.
@@ -485,6 +597,40 @@ export function convertCodexToDsh(
   }
 
   return { header, events, tallies, losses: describeLosses(tallies) }
+}
+
+function compactionSnapshot(payload: JsonObject): JsonObject[] {
+  const history = payload.replacement_history
+  if (history === undefined) {
+    if (typeof payload.message !== 'string' || payload.message.length === 0) {
+      throw new Error('Refusing compaction migration without a readable summary or replacement history')
+    }
+    return [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: payload.message }] }]
+  }
+  if (!Array.isArray(history) || history.length === 0) throw new Error('Refusing compaction migration with invalid replacement history')
+  const calls = new Set<string>()
+  const messages: JsonObject[] = []
+  for (const entry of history) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) throw new Error('Invalid compaction context item')
+    const item = entry as JsonObject
+    if (item.type === 'message') {
+      if (item.role !== 'user' && item.role !== 'assistant') throw new Error('Unsupported role in compaction context')
+      const content = toDshContent(item.content)
+      if (content.dropped > 0 || content.blocks.length === 0) throw new Error('Unreadable content in compaction context')
+    } else if (item.type === 'function_call' || item.type === 'custom_tool_call') {
+      if (typeof item.call_id !== 'string' || item.call_id.length === 0 || typeof item.name !== 'string' || item.name.length === 0) {
+        throw new Error('Invalid tool call in compaction context')
+      }
+      if (calls.has(item.call_id)) throw new Error('Duplicate tool call in compaction context')
+      calls.add(item.call_id)
+    } else if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
+      if (typeof item.call_id !== 'string' || !calls.delete(item.call_id)) throw new Error('Unpaired tool output in compaction context')
+    } else throw new Error('Unsupported or encrypted item in compaction context; refusing partial migration')
+    messages.push(item)
+  }
+  if (calls.size > 0) throw new Error('Unresolved tool call in compaction context; refusing partial migration')
+  if (messages[0]!.type !== 'message' || messages[0]!.role !== 'user') throw new Error('Compaction context must begin with a user message')
+  return messages
 }
 
 /**

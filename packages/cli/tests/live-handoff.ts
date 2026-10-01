@@ -8,6 +8,7 @@ import { execute } from '../src/command.ts'
 import { parseRollout } from '../../codex-adapter/src/rollout.ts'
 import { parseSessionLog } from '../../dsh-adapter/src/format.ts'
 import { readFrames } from '../../dsh-adapter/src/zstd.ts'
+import { activeEvents } from '../../contract/tests/compaction-fixture.ts'
 
 if (process.env.AGENT_CONTINUE_LIVE !== '1') throw new Error('Real model calls require AGENT_CONTINUE_LIVE=1')
 const repository = resolve(import.meta.dirname, '../../..')
@@ -18,6 +19,9 @@ for (const path of [binary, dshBinary, python]) assert.ok(path && isAbsolute(pat
 const runtime = join(repository, '.agent-continue')
 mkdirSync(runtime, { recursive: true })
 const resumeRoot = process.env.AGENT_CONTINUE_LIVE_RESUME
+const verifyOnly = process.env.AGENT_CONTINUE_LIVE_VERIFY_ONLY === '1'
+assert.ok(!verifyOnly || resumeRoot, 'Verification-only mode requires an existing isolated run')
+const compactBeforeInterruption = process.env.AGENT_CONTINUE_LIVE_COMPACT === '1'
 const root = resumeRoot ? resolve(resumeRoot) : mkdtempSync(join(runtime, 'live-handoff-'))
 assert.ok(relative(runtime, root) && !relative(runtime, root).startsWith('..') && !isAbsolute(relative(runtime, root)))
 const evidence: Record<string, any> = resumeRoot ? JSON.parse(readFileSync(join(root, 'evidence.json'), 'utf8')) : {
@@ -27,7 +31,7 @@ const evidence: Record<string, any> = resumeRoot ? JSON.parse(readFileSync(join(
 const persist = () => writeFileSync(join(root, 'evidence.json'), JSON.stringify(evidence, null, 2))
 const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 const files = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)])
-const auth = JSON.parse(execFileSync(python, ['-c', [
+const auth = verifyOnly ? { model: evidence.codexModel, provider: '', route: {}, auth: {}, dshKey: undefined } : JSON.parse(execFileSync(python, ['-c', [
   'import json,tomllib,yaml,pathlib',
   "home=pathlib.Path.home(); config=tomllib.loads((home/'.codex/config.toml').read_text(encoding='utf-8'))",
   "codex_auth=json.loads((home/'.codex/auth.json').read_text()); dsh_credentials=yaml.safe_load((home/'.dsh/.credentials.yaml').read_text(encoding='utf-8'))",
@@ -35,7 +39,7 @@ const auth = JSON.parse(execFileSync(python, ['-c', [
   "print(json.dumps({'model':config['model'],'provider':provider,'route':{key:route[key] for key in ['name','base_url','wire_api','requires_openai_auth','env_key','env_key_instructions'] if key in route},'auth':codex_auth,'dshKey':dsh_credentials['refs']['DEEPSEEK_API_KEY']}))",
 ].join(';')], { encoding: 'utf8', windowsHide: true }))
 const secrets = [auth.dshKey, auth.auth.OPENAI_API_KEY].filter((value) => typeof value === 'string' && value.length > 0)
-evidence.configuredCodexModel = auth.model
+if (!verifyOnly) evidence.configuredCodexModel = auth.model
 auth.model = process.env.AGENT_CONTINUE_LIVE_MODEL ?? auth.model
 const redact = (text: string) => secrets.reduce((current, secret) => current.replaceAll(secret, '[REDACTED]'), text)
 const environment = (home: string): NodeJS.ProcessEnv => ({
@@ -192,9 +196,12 @@ writeFileSync(join(sourceHome, 'config.toml'), [
 ].join('\n'))
 }
 evidence.codexVersion = execFileSync(binary, ['--version'], { encoding: 'utf8', windowsHide: true }).trim()
-evidence.codexAuthMode = auth.auth.auth_mode
+if (!verifyOnly) evidence.codexAuthMode = auth.auth.auth_mode
 evidence.codexModel = auth.model
 evidence.runnerHash = hash(import.meta.filename)
+evidence.implementationHashes = Object.fromEntries(['cli', 'contract', 'codex-adapter', 'dsh-adapter'].flatMap((name) =>
+  files(join(repository, 'packages', name, 'src')).map((path) => [relative(repository, path).replaceAll('\\', '/'), hash(path)])))
+evidence.binaryHashes = { codex: hash(binary), dshLauncher: hash(dshBinary) }
 persist()
 console.log(`Isolated evidence: ${root}`)
 let codex: RpcClient | undefined
@@ -219,6 +226,21 @@ try {
   evidence.checkpointGitStatus = execFileSync('git', ['status', '--short'], { cwd: work, encoding: 'utf8' }).trim()
   assert.ok(String(evidence.checkpointGitStatus).includes('src/ledger.mjs'))
   cpSync(work, join(root, 'checkpoint'), { recursive: true })
+  if (compactBeforeInterruption) {
+    const sourcePath = files(join(sourceHome, 'sessions')).find((path) => path.endsWith('.jsonl') && path.includes(threadId))!
+    const before = codex.notifications.length
+    await codex.call('thread/compact/start', { threadId }, 30_000)
+    await codex.wait((message) => codex!.notifications.indexOf(message) >= before && message.method === 'turn/completed', 180_000)
+    const compacted = parseRollout(readFileSync(sourcePath, 'utf8')).records.filter((record) => record.type === 'compacted')
+    evidence.compaction = {
+      nativeRecords: compacted.length,
+      payloadKeys: compacted.map((record) => Object.keys(record.payload)),
+      historyKinds: compacted.map((record) => Array.isArray(record.payload.replacement_history) ? record.payload.replacement_history.map((item: any) => item.type) : []),
+      plaintextSummaryLengths: compacted.map((record) => typeof record.payload.message === 'string' ? record.payload.message.length : 0),
+    }
+    persist()
+    assert.ok(compacted.length > 0, 'Real native compaction must persist before testing compacted continuation')
+  }
   const followup = await codex.call('turn/start', { threadId, input: [{ type: 'text', text: 'Continue with the remaining stage now. First run the existing smoke tests before editing anything.' }] })
   const boundary = await codex.wait((message) => message.method === 'item/started' && message.params?.turnId === followup.turn.id && message.params?.item?.type === 'commandExecution', 90_000)
   evidence.interruptionItem = boundary.params.item.type
@@ -244,11 +266,26 @@ try {
   assert.ok(sourceRelative && !sourceRelative.startsWith('..') && !isAbsolute(sourceRelative), 'Resume cannot read an unrelated source store')
   assert.equal(hash(rollout), evidence.sourceHash, 'Resume must use the unchanged original conversation')
   for (const scenario of ['same-workspace', 'relocated-workspace']) {
-    const cwd = scenario === 'same-workspace' ? work : join(root, 'relocated')
+    const previous = evidence[scenario]
+    const baseCwd = scenario === 'same-workspace' ? work : join(root, 'relocated')
+    const retry = !verifyOnly && (previous !== undefined ? previous.accepted !== true : Boolean(resumeRoot && existsSync(baseCwd)))
+    const cwd = retry ? mkdtempSync(join(root, `${scenario}-retry-`)) : previous?.cwd ?? baseCwd
+    if (retry) {
+      cpSync(join(root, 'checkpoint'), cwd, { recursive: true })
+      evidence.previousAttempts ??= []
+      evidence.previousAttempts.push({ scenario, ...previous, failure: evidence.failure })
+      delete evidence[scenario]
+    }
     if (scenario === 'relocated-workspace' && !existsSync(cwd)) cpSync(join(root, 'checkpoint'), cwd, { recursive: true })
     let result: Record<string, any> = evidence[scenario]
-    if (result?.accepted !== true) {
-    const home = join(root, `${scenario}-dsh-home`)
+    if (verifyOnly) {
+      assert.ok(result?.migration?.output?.path && result?.restartedSuccessfully, 'Verification-only mode cannot finish an incomplete native execution')
+      assert.equal(hash(join(cwd, 'src/ledger.mjs')), result.finalCodeHash, 'Existing completed code must remain unchanged')
+    }
+    if (result?.accepted !== true && !verifyOnly) {
+    evidence[scenario] = { cwd, status: 'preparing', runnerHash: evidence.runnerHash, implementationHashes: evidence.implementationHashes }
+    persist()
+    const home = mkdtempSync(join(root, `${scenario}-dsh-home-`))
     prepareHome(home)
     const profile = 'live-acceptance'
     const env = { ...environment(home), DEEPSEEK_API_KEY: auth.dshKey, DSH_PROFILE: profile, DSH_PROFILE_DIR: join(home, 'profiles', profile) }
@@ -262,8 +299,22 @@ try {
     const migration = execute(['migrate', '--from', 'codex', '--input', rollout, '--cwd', cwd, '--target-home', home, '--id', id])
     const output = (migration.output as { path: string }).path
     const imported = parseSessionLog(readFrames(readFileSync(output)).text, 4)
+    const compactions = parseRollout(readFileSync(rollout, 'utf8')).records.filter((record) => record.type === 'compacted')
+    let compactionPreserved: boolean | undefined
+    if (compactions.length > 0) {
+      const latest = compactions.at(-1)!
+      const history = latest.payload.replacement_history as { type: string; role: string; content: { text: string }[] }[]
+      const active = activeEvents(imported.events)
+      const retained = active.filter((event) => (event.data as any).source?.kind === 'agent-continue-codex-compaction')
+      assert.deepEqual(retained.map((event) => ({ role: (event.data as any).role, text: (event.data as any).content.map((block: any) => block.text).join('') })),
+        history.map((item) => ({ role: item.role, text: item.content.map((block) => block.text).join('') })), 'Canonical native replacement context must survive exactly and in order')
+      assert.equal(retained[0]!.surfaceOp === 'append', false, 'Compaction must replace old active history, not append a second copy')
+      compactionPreserved = true
+    }
     result = {
       cwd, sessionId: id, migration, importedHash: hash(output),
+      runnerHash: evidence.runnerHash, implementationHashes: evidence.implementationHashes,
+      compactionPreserved,
       inheritedRequirement: JSON.stringify(imported.events).includes('context-only-731'),
       startingCodeHash: hash(join(cwd, 'src/ledger.mjs')), followup: '\u7ee7\u7eed',
     }
@@ -282,6 +333,16 @@ try {
     try { result.prompt = await prompt } finally { clearInterval(watchdog) }
     result.assistantText = dsh.notifications.filter((message) => message.params?.update?.sessionUpdate === 'agent_message_chunk').map((message) => message.params.update.content?.text ?? '').join('\n')
     result.toolNames = [...dsh.toolCalls.values()].map((tool) => tool.title)
+    await dsh.call('session/close', { sessionId: id }, 30_000)
+    await dsh.close()
+    dsh = undefined
+    dsh = new RpcClient('cmd.exe', ['/d', '/c', dshBinary, profile], env, cwd, `${scenario}-restart`)
+    const restarted = await dsh.call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'agent_continue_live_restart', version: '0.0.1' } }, 30_000)
+    const reopened = await dsh.call('session/resume', { cwd, sessionId: id, mcpServers: [] }, 60_000)
+    assert.ok(reopened)
+    assert.equal(dsh.toolCalls.size, 0, 'Restart cannot replay historical tools')
+    result.restartedSuccessfully = true
+    result.restartAgent = restarted.agentInfo
     await dsh.call('session/close', { sessionId: id }, 30_000)
     await dsh.close()
     dsh = undefined
@@ -335,15 +396,16 @@ try {
     assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }), execFileSync('git', ['rev-parse', 'HEAD'], { cwd: join(root, 'checkpoint'), encoding: 'utf8' }))
     result.onlyImplementationChanged = true
     const observedTools = readFileSync(join(root, `${scenario}.jsonl`), 'utf8').trim().split('\n').map((line) => JSON.parse(line))
-      .filter((message) => message.params?.update?.sessionUpdate === 'tool_call').map((message) => message.params.update)
+      .filter((message) => message.params?.sessionId === result.sessionId && message.params?.update?.sessionUpdate === 'tool_call').map((message) => message.params.update)
     for (const tool of observedTools) {
-      for (const path of [tool.rawInput?.file_path, tool.rawInput?.workdir]) {
+      for (const path of [tool.rawInput?.file_path, tool.rawInput?.workdir, tool.rawInput?.path]) {
         if (typeof path !== 'string') continue
         const target = relative(cwd, resolve(cwd, path))
         assert.ok(!target.startsWith('..') && !isAbsolute(target), 'Observed tool target must stay in the current workspace')
       }
     }
     result.explicitToolPathsStayedInWorkspace = true
+    result.promptFinishedNormally = result.prompt?.stopReason === 'end_turn'
     result.handoffDocumentCreated = files(cwd).some((path) => /handoff.*\.md$/i.test(basename(path)))
     assert.equal(result.handoffDocumentCreated, false)
     result.accepted = true

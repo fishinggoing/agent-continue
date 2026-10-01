@@ -52,7 +52,9 @@ const { header: h, events: e, tallies: t, losses: l } = convertCodexToDsh(record
 | `event_msg/item_completed` | 丢弃 | Codex 的 UI 层并行记录，与 `response_item/message` 内容重复 |
 | `event_msg/token_count` | 丢弃 | 逐请求计数器与限流信息，DSH 没有对应事件 |
 | `event_msg/turn_aborted` | 丢弃 | 被中止的 turn 收尾为 `{kind:'interrupted'}`，Codex 的中止细节无处安放 |
-| `world_state` / `compacted` / `realtime_item` / `inter_agent_communication_metadata` | 丢弃 | 没有 DSH 对应物 |
+| 明文 `compacted` | 保留有效上下文与审计历史 | replacement history 替换旧 surface，旧事件不删除；仅无 replacement history 时使用明文摘要。加密、非文本、未配对工具或未决原调用明确拒绝，不静默降级 |
+| `compacted` 的厂商窗口、resume 与 token 元数据 | 丢弃并报告 | 不是 DSH 原生运行状态，不编造压缩模型调用或计数 |
+| `world_state` / `realtime_item` / `inter_agent_communication_metadata` | 丢弃 | 没有 DSH 对应物 |
 | `assistant/message.stream` | 写空数组 | DSH 的流式分片在 Codex 里没有对应物 |
 | `request/header` | 不写 | 我们不知道原始请求头，编造比留空更糟 |
 
@@ -102,6 +104,8 @@ const { header: h, events: e, tallies: t, losses: l } = convertCodexToDsh(record
 
 `assistant/message.source` 用 **Codex 原值**（`model_provider` / `turn_context.model`），
 不替换成 DSH 的 provider —— 记录"这条消息实际由谁产生"才是诚实的。
+
+迁入时保留一个内容为空的 DSH 系统首节点，带显式 migration 标记，由当前 DSH 进程替换；不是复制外来提示或捏造 DSH 指令。压缩不能覆盖该节点。已明确记录的 `TOOL_OUTCOME_UNKNOWN` 在压缩后仍以带来源引用的上下文提醒保留，不能因摘要没有提及就当作成功。工作区重映射额外投递真实的新旧目录状态，不改写历史路径、不复制工程文件。DSH → Codex 的 surface replacement 尚未实现等价投递，本次不能据此宣称双向压缩无损。
 
 ### DSH → Codex
 

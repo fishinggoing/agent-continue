@@ -36,6 +36,7 @@ test('maps Codex records onto DSH events', () => {
   assert.deepEqual(kinds, [
     'turn/start',
     'step/start',
+    'system/message',
     'user/message',
     // v4 requires a tool call to be advertised by an assistant message before its
     // `tool/call`, so the converter inserts one (D3).
@@ -317,7 +318,7 @@ test('resolves an interrupted call when later turns follow, instead of dropping 
   assert.equal(data.error?.code, 'TOOL_OUTCOME_UNKNOWN')
   assert.equal(data.message.isError, true)
   assert.equal(data.message.toolCallId, 'c-1')
-  assert.deepEqual(synthesized.sourceEventSeqs, [3], 'it cites the tool/call it resolves')
+  assert.deepEqual(synthesized.sourceEventSeqs, [conversion.events.find((event) => event.type === 'tool/call')!.seq], 'it cites the tool/call it resolves')
   assert.equal(conversion.tallies['tool/result.synthesized-unknown']?.mapped, 1)
 
   // And the whole thing has to satisfy DSH's own admission rules.
