@@ -211,7 +211,7 @@ export function convertCodexToDsh(
 
   const beginStep = (): TurnState => {
     const current = turn!
-    if (current.lastAssistantSeen || !current.openStep) {
+    if (!current.openStep || (current.lastAssistantSeen && current.openCalls.size === 0)) {
       closeStep()
       current.step += 1
       current.lastAssistantSeen = false

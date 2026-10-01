@@ -81,6 +81,16 @@ for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'interr
     }
     const restored = parseSessionLog(readFrames(readFileSync(output.path)).text, 4)
     const restoredText = JSON.stringify(restored.events)
+    if (followed && !nativeControl) {
+      const call = restored.events.find((event) => event.type === 'tool/call')!
+      const results = restored.events.filter((event) => event.type === 'tool/result')
+      assert.equal(results.length, 1)
+      assert.deepEqual(results[0]!.sourceEventSeqs, [call.seq], 'The synthesized recovery cites its original started call')
+      const data = results[0]!.data as { error: { name: string }; message: { toolCallId: string; source: { callId: string } } }
+      assert.equal(data.error.name, 'ToolOutcomeUnknownError')
+      assert.equal(data.message.toolCallId, 'synthetic-call')
+      assert.equal(data.message.source.callId, 'synthetic-call')
+    }
     if (!interrupted) {
       for (const text of CONVERSATION_TEXTS) assert.ok(restoredText.includes(text))
       assert.ok(restoredText.includes('SYNTHETIC PRIVATE RESULT'))
@@ -92,17 +102,19 @@ for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'interr
       } else assert.equal(restored.events.filter((event) => event.type === 'tool/result').length, 0)
       assert.ok(restoredText.includes('SYNTHETIC PRIVATE QUESTION'))
     }
-    await withRpcServer('cmd.exe', ['/d', '/c', binary, profile], env, root, async (call, notifications) => {
-      const initialized = await call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'agent_continue_cli_test', version: '0.0.1' } })
-      assert.equal(initialized.error, undefined)
-      const listed = await call('session/list', { cwd: root })
-      assert.equal(listed.error, undefined)
-      assert.ok((listed.result?.sessions as { sessionId: string }[]).some((session) => session.sessionId === id))
-      const resumed = await call('session/resume', { cwd: root, sessionId: id })
-      assert.equal(resumed.error, undefined, `Native DSH rejected converted history: ${JSON.stringify(resumed.error)}`)
-      assert.ok(resumed.result?.configOptions !== undefined)
-      assert.ok(!notifications.some((notification) => notification.id !== undefined), 'No historical tool execution or approval request is issued during native recovery')
-    })
+    for (let attempt = 0; attempt < (followed ? 2 : 1); attempt += 1) {
+      await withRpcServer('cmd.exe', ['/d', '/c', binary, profile], env, root, async (call, notifications) => {
+        const initialized = await call('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'agent_continue_cli_test', version: '0.0.1' } })
+        assert.equal(initialized.error, undefined)
+        const listed = await call('session/list', { cwd: root })
+        assert.equal(listed.error, undefined)
+        assert.ok((listed.result?.sessions as { sessionId: string }[]).some((session) => session.sessionId === id))
+        const resumed = await call('session/resume', { cwd: root, sessionId: id })
+        assert.equal(resumed.error, undefined, `Native DSH rejected converted history: ${JSON.stringify(resumed.error)}`)
+        assert.ok(resumed.result?.configOptions !== undefined)
+        assert.ok(!notifications.some((notification) => notification.id !== undefined), 'No historical tool execution or approval request is issued during native recovery')
+      })
+    }
     const after = parseSessionLog(readFrames(readFileSync(output.path)).text, 4)
     if (followed) {
       const afterText = JSON.stringify(after.events)
@@ -111,6 +123,10 @@ for (const scenario of ['multi-turn-completed-tool', 'interrupted-tool', 'interr
     }
     const results = after.events.filter((event) => event.type === 'tool/result')
     assert.equal(results.length, 1, 'Native recovery preserves the completed result or records an unknown-outcome repair')
+    if (followed && !nativeControl) {
+      const call = after.events.find((event) => event.type === 'tool/call')!
+      assert.deepEqual(results[0]!.sourceEventSeqs, [call.seq], 'Native restoration retains the original call provenance')
+    }
     if (interrupted) {
       const data = results[0]!.data as { error: { code: string }; message: { isError: boolean } }
       assert.equal(data.error.code, 'TOOL_OUTCOME_UNKNOWN')

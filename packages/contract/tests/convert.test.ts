@@ -190,6 +190,48 @@ function rolloutOf(records: Record<string, unknown>[]): RolloutRecord[] {
   return parseRollout(records.map((record) => JSON.stringify(record)).join('\n')).records as RolloutRecord[]
 }
 
+for (const parallel of [false, true]) {
+  test(`keeps interleaved assistant messages and ${parallel ? 'parallel calls' : 'a call result'} in the pending step`, () => {
+    const timestamp = '2026-10-01T02:00:00.000Z'
+    const records: RolloutRecord[] = [
+      { timestamp, type: 'session_meta', payload: { id: 'interleaved', cwd: 'F:\\proj' } },
+      { timestamp, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+      { timestamp, type: 'response_item', payload: { type: 'function_call', call_id: 'c-1', name: 'first', arguments: '{}' } },
+      { timestamp, type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'FIRST COMMENT' }] } },
+    ]
+    if (parallel) {
+      records.push({ timestamp, type: 'response_item', payload: { type: 'function_call', call_id: 'c-2', name: 'second', arguments: '{}' } })
+    }
+    records.push(
+      { timestamp, type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'SECOND COMMENT' }] } },
+      { timestamp, type: 'response_item', payload: { type: 'function_call_output', call_id: 'c-1', output: 'FIRST RESULT' } },
+    )
+    if (parallel) {
+      records.push({ timestamp, type: 'response_item', payload: { type: 'function_call_output', call_id: 'c-2', output: 'SECOND RESULT' } })
+    }
+    records.push(
+      { timestamp, type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'FINAL ANSWER' }] } },
+      { timestamp, type: 'event_msg', payload: { type: 'task_complete', turn_id: 't1' } },
+    )
+    const conversion = convertCodexToDsh(records, { sessionId: 'interleaved', cwd: 'F:\\proj' })
+    const calls = conversion.events.filter((event) => event.type === 'tool/call')
+    const results = conversion.events.filter((event) => event.type === 'tool/result')
+    assert.equal(calls.length, parallel ? 2 : 1)
+    assert.equal(results.length, calls.length)
+    assert.ok(calls.every((event) => event.data.step === 1))
+    assert.ok(results.every((event) => event.data.step === 1))
+    const firstCloser = conversion.events.findIndex((event) => event.type === 'step/end')
+    const lastResult = conversion.events.findLastIndex((event) => event.type === 'tool/result')
+    assert.ok(firstCloser > lastResult, 'The pending step cannot close before all calls settle')
+    assert.equal(conversion.events.filter((event) => event.type === 'step/start').length, 2)
+    for (const text of ['FIRST COMMENT', 'SECOND COMMENT', 'FIRST RESULT', 'FINAL ANSWER']) {
+      assert.ok(JSON.stringify(conversion.events).includes(text))
+    }
+    assert.equal(conversion.tallies['tool/result.synthesized-unknown']?.mapped ?? 0, 0)
+    assert.doesNotThrow(() => parseSessionLog(serializeSessionLog(conversion.header, conversion.events), 4))
+  })
+}
+
 /**
  * D4: a started call with no result must leave the step and turn open.
  *
