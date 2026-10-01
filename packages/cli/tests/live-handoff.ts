@@ -9,6 +9,7 @@ import { parseRollout } from '../../codex-adapter/src/rollout.ts'
 import { parseSessionLog } from '../../dsh-adapter/src/format.ts'
 import { readFrames } from '../../dsh-adapter/src/zstd.ts'
 import { activeEvents } from '../../contract/tests/compaction-fixture.ts'
+import { LONG_CONTEXT_MEMO, longContextTurns } from './long-context.ts'
 
 if (process.env.AGENT_CONTINUE_LIVE !== '1') throw new Error('Real model calls require AGENT_CONTINUE_LIVE=1')
 const repository = resolve(import.meta.dirname, '../../..')
@@ -22,6 +23,10 @@ const resumeRoot = process.env.AGENT_CONTINUE_LIVE_RESUME
 const verifyOnly = process.env.AGENT_CONTINUE_LIVE_VERIFY_ONLY === '1'
 assert.ok(!verifyOnly || resumeRoot, 'Verification-only mode requires an existing isolated run')
 const compactBeforeInterruption = process.env.AGENT_CONTINUE_LIVE_COMPACT === '1'
+const longContext = process.env.AGENT_CONTINUE_LIVE_LONG_CONTEXT === '1'
+const autoCompactLimit = Number(process.env.AGENT_CONTINUE_LIVE_AUTO_COMPACT_LIMIT ?? '22000')
+assert.ok(!longContext || Number.isSafeInteger(autoCompactLimit) && autoCompactLimit >= 12_000 && autoCompactLimit <= 60_000, 'Long-context auto-compaction limit must be an integer from 12000 to 60000')
+assert.ok(!(longContext && compactBeforeInterruption), 'Long-context verification must not invoke manual compaction')
 const root = resumeRoot ? resolve(resumeRoot) : mkdtempSync(join(runtime, 'live-handoff-'))
 assert.ok(relative(runtime, root) && !relative(runtime, root).startsWith('..') && !isAbsolute(relative(runtime, root)))
 const evidence: Record<string, any> = resumeRoot ? JSON.parse(readFileSync(join(root, 'evidence.json'), 'utf8')) : {
@@ -29,6 +34,8 @@ const evidence: Record<string, any> = resumeRoot ? JSON.parse(readFileSync(join(
   simulatedInterruption: true, realQuotaExhaustion: false, root,
 }
 const persist = () => writeFileSync(join(root, 'evidence.json'), JSON.stringify(evidence, null, 2))
+const expectedMemo = evidence.expectedMemo ?? (longContext ? LONG_CONTEXT_MEMO : 'context-only-731')
+evidence.expectedMemo = expectedMemo
 const hash = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex')
 const files = (directory: string): string[] => readdirSync(directory, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? files(join(directory, entry.name)) : [join(directory, entry.name)])
 const auth = verifyOnly ? { model: evidence.codexModel, provider: '', route: {}, auth: {}, dshKey: undefined } : JSON.parse(execFileSync(python, ['-c', [
@@ -117,7 +124,9 @@ class RpcClient {
     if (message.method === 'session/request_permission') {
       const tool = this.toolCalls.get(message.params.toolCall.toolCallId)
       const raw = JSON.stringify(tool?.rawInput ?? {})
-      const allowed = tool !== undefined && !/https?:|credentials|auth\.json|\.codex|\.dsh|\.\.\\|\.\.\/|subagent|spawn_agent/i.test(raw)
+      const paths = [tool?.rawInput?.file_path, tool?.rawInput?.workdir, tool?.rawInput?.path].filter((path) => typeof path === 'string')
+      const inside = paths.every((path) => { const target = relative(cwd, resolve(cwd, path)); return !target.startsWith('..') && !isAbsolute(target) })
+      const allowed = tool !== undefined && inside && !/https?:|credentials|auth\.json|\.codex|\.dsh|\.\.\\|\.\.\/|subagent|spawn_agent/i.test(raw)
       this.send({ jsonrpc: '2.0', id: message.id, result: { outcome: { outcome: 'selected', optionId: allowed ? 'allow-once' : 'reject-once' } } })
     } else {
       this.send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: `Acceptance client rejects unsupported request in ${cwd}` } })
@@ -191,6 +200,7 @@ writeFileSync(join(sourceHome, 'auth.json'), JSON.stringify(auth.auth), { mode: 
 writeFileSync(join(sourceHome, 'config.toml'), [
   `model = ${JSON.stringify(auth.model)}`, `model_provider = ${JSON.stringify(auth.provider)}`,
   'model_reasoning_effort = "low"', 'approval_policy = "never"', 'sandbox_mode = "danger-full-access"',
+  ...(longContext ? [`model_auto_compact_token_limit = ${autoCompactLimit}`] : []),
   `[model_providers.${auth.provider}]`,
   ...Object.entries(auth.route).map(([key, value]) => `${key} = ${JSON.stringify(value)}`), '',
 ].join('\n'))
@@ -202,6 +212,10 @@ evidence.runnerHash = hash(import.meta.filename)
 evidence.implementationHashes = Object.fromEntries(['cli', 'contract', 'codex-adapter', 'dsh-adapter'].flatMap((name) =>
   files(join(repository, 'packages', name, 'src')).map((path) => [relative(repository, path).replaceAll('\\', '/'), hash(path)])))
 evidence.binaryHashes = { codex: hash(binary), dshLauncher: hash(dshBinary) }
+if (!resumeRoot) evidence.sourceBuild = {
+  runnerHash: evidence.runnerHash, implementationHashes: evidence.implementationHashes,
+  longContextFixtureHash: longContext ? hash(join(import.meta.dirname, 'long-context.ts')) : undefined,
+}
 persist()
 console.log(`Isolated evidence: ${root}`)
 let codex: RpcClient | undefined
@@ -226,6 +240,18 @@ try {
   evidence.checkpointGitStatus = execFileSync('git', ['status', '--short'], { cwd: work, encoding: 'utf8' }).trim()
   assert.ok(String(evidence.checkpointGitStatus).includes('src/ledger.mjs'))
   cpSync(work, join(root, 'checkpoint'), { recursive: true })
+  if (longContext) {
+    evidence.longContext = { autoCompactLimit, manualCompactionRequests: 0, amendmentOnlyInDialogue: true, turns: [] }
+    for (const [index, text] of longContextTurns().entries()) {
+      const extra = await codex.call('turn/start', { threadId, input: [{ type: 'text', text }] })
+      const finished = await codex.wait((message) => message.method === 'turn/completed' && message.params?.turn?.id === extra.turn.id)
+      assert.equal(finished.params.turn.status, 'completed', redact(JSON.stringify(finished.params.turn.error)))
+      assert.equal(hash(join(work, 'src/ledger.mjs')), evidence.checkpointHash, 'Context-pressure turns must not implement or record requirements in files')
+      evidence.longContext.turns.push({ index, inputCharacters: text.length, status: finished.params.turn.status })
+      persist()
+    }
+    assert.ok(!readFileSync(join(work, 'src/ledger.mjs'), 'utf8').includes(expectedMemo), 'Final amended value must remain dialogue-only at the interruption checkpoint')
+  }
   if (compactBeforeInterruption) {
     const sourcePath = files(join(sourceHome, 'sessions')).find((path) => path.endsWith('.jsonl') && path.includes(threadId))!
     const before = codex.notifications.length
@@ -259,6 +285,15 @@ try {
   assert.equal(source.failures.length, 0)
   evidence.sourceRecordKinds = source.records.reduce((counts: Record<string, number>, record) => { counts[record.type] = (counts[record.type] ?? 0) + 1; return counts }, {})
   evidence.originalRequirementInSource = readFileSync(rollout, 'utf8').includes('context-only-731')
+  if (longContext) {
+    const compactions = source.records.filter((record) => record.type === 'compacted')
+    evidence.longContext.automaticCompactions = compactions.length
+    evidence.longContext.sourceCharacters = readFileSync(rollout, 'utf8').length
+    evidence.longContext.finalAmendmentInCanonicalSnapshot = JSON.stringify(compactions.at(-1)?.payload.replacement_history).includes(expectedMemo)
+    persist()
+    assert.ok(compactions.length >= 2, 'Long-context verification must cross at least two real automatic compactions without manual compact RPCs')
+    assert.equal(evidence.longContext.finalAmendmentInCanonicalSnapshot, true)
+  }
   persist()
   }
   const rollout = evidence.sourcePath ?? files(join(sourceHome, 'sessions')).find((path) => path.endsWith('.jsonl') && path.includes(evidence.sourceThread))!
@@ -305,7 +340,7 @@ try {
       const latest = compactions.at(-1)!
       const history = latest.payload.replacement_history as { type: string; role: string; content: { text: string }[] }[]
       const active = activeEvents(imported.events)
-      const retained = active.filter((event) => (event.data as any).source?.kind === 'agent-continue-codex-compaction')
+      const retained = active.filter((event) => (event.data as any).source?.kind === 'agent-continue-codex-compaction' && (event.data as any).source.sourceOrdinal === latest.ordinal)
       assert.deepEqual(retained.map((event) => ({ role: (event.data as any).role, text: (event.data as any).content.map((block: any) => block.text).join('') })),
         history.map((item) => ({ role: item.role, text: item.content.map((block) => block.text).join('') })), 'Canonical native replacement context must survive exactly and in order')
       assert.equal(retained[0]!.surfaceOp === 'append', false, 'Compaction must replace old active history, not append a second copy')
@@ -316,6 +351,7 @@ try {
       runnerHash: evidence.runnerHash, implementationHashes: evidence.implementationHashes,
       compactionPreserved,
       inheritedRequirement: JSON.stringify(imported.events).includes('context-only-731'),
+      inheritedExpectedMemo: JSON.stringify(activeEvents(imported.events)).includes(expectedMemo),
       startingCodeHash: hash(join(cwd, 'src/ledger.mjs')), followup: '\u7ee7\u7eed',
     }
     evidence[scenario] = result
@@ -357,18 +393,18 @@ try {
     assert.equal(ledger.openAccount('alpha', 900), 900)
     ledger.openAccount('beta', 100)
     assert.equal(ledger.balance('alpha'), 900)
-    assert.deepEqual(ledger.transfer('t1', 'alpha', 'beta', 250), { id: 't1', applied: true, memo: 'context-only-731' })
+    assert.deepEqual(ledger.transfer('t1', 'alpha', 'beta', 250), { id: 't1', applied: true, memo: expectedMemo })
     assert.equal(ledger.balance('alpha'), 650)
     assert.equal(ledger.balance('beta'), 350)
-    assert.deepEqual(ledger.transfer('t1', 'alpha', 'beta', 250), { id: 't1', applied: false, memo: 'context-only-731' })
+    assert.deepEqual(ledger.transfer('t1', 'alpha', 'beta', 250), { id: 't1', applied: false, memo: expectedMemo })
     assert.throws(() => ledger.transfer('t1', 'alpha', 'beta', 251), { message: 'TRANSFER_CONFLICT' })
     assert.throws(() => ledger.transfer('failed', 'alpha', 'beta', 1000), { message: 'INSUFFICIENT_FUNDS' })
     assert.equal(ledger.balance('alpha'), 650)
-    assert.deepEqual(ledger.transfer('failed', 'alpha', 'beta', 50), { id: 'failed', applied: true, memo: 'context-only-731' })
+    assert.deepEqual(ledger.transfer('failed', 'alpha', 'beta', 50), { id: 'failed', applied: true, memo: expectedMemo })
     const history = ledger.history()
     assert.deepEqual(history, [
-      { id: 't1', from: 'alpha', to: 'beta', cents: 250, memo: 'context-only-731' },
-      { id: 'failed', from: 'alpha', to: 'beta', cents: 50, memo: 'context-only-731' },
+      { id: 't1', from: 'alpha', to: 'beta', cents: 250, memo: expectedMemo },
+      { id: 'failed', from: 'alpha', to: 'beta', cents: 50, memo: expectedMemo },
     ])
     history[0].cents = 999
     history.pop()
@@ -406,6 +442,7 @@ try {
     }
     result.explicitToolPathsStayedInWorkspace = true
     result.promptFinishedNormally = result.prompt?.stopReason === 'end_turn'
+    if (evidence.longContext) assert.equal(result.promptFinishedNormally, true, 'Long-context real continuation requires normal completion, not cancellation at the response cap')
     result.handoffDocumentCreated = files(cwd).some((path) => /handoff.*\.md$/i.test(basename(path)))
     assert.equal(result.handoffDocumentCreated, false)
     result.accepted = true
