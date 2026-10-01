@@ -38,3 +38,10 @@ export {
   type SessionHeader,
   type SurfaceOp,
 } from './format.ts'
+
+export {
+  encodeArtifact,
+  writeArtifact,
+  type WriteArtifactOptions,
+  type WrittenArtifact,
+} from './write.ts'

@@ -35,3 +35,15 @@ export {
   type RolloutFilenameParts,
   type RolloutFile,
 } from './paths.ts'
+
+export {
+  encodeRollout,
+  extendedLengthPath,
+  registerThread,
+  seedProjectionCursor,
+  writeRollout,
+  type RolloutDraft,
+  type ThreadRegistration,
+  type WriteRolloutOptions,
+  type WrittenRollout,
+} from './write.ts'
