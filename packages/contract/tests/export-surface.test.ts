@@ -77,6 +77,51 @@ test('every src module of a package is reachable from its entry point', () => {
 })
 
 /**
+ * The runtime half of the check.
+ *
+ * The tests above read text, which a commented-out or type-only export would
+ * still satisfy. Codex demonstrated the stronger check during its independent
+ * verification of D10: import the entry point and assert the value really is a
+ * function. Both halves are kept — the text scan is the only way to cover
+ * type-only exports, and this covers everything that must exist at runtime.
+ */
+test('the runtime entry points are real callable exports', async () => {
+  const dsh = await import('../../dsh-adapter/src/index.ts')
+  const codex = await import('../../codex-adapter/src/index.ts')
+  const contract = await import('../src/index.ts')
+
+  const mustBeFunctions: [string, Record<string, unknown>][] = [
+    ['@agent-continue/dsh-adapter', { encodeArtifact: dsh.encodeArtifact, writeArtifact: dsh.writeArtifact }],
+    ['@agent-continue/codex-adapter', {
+      encodeRollout: codex.encodeRollout,
+      writeRollout: codex.writeRollout,
+      registerThread: codex.registerThread,
+      seedProjectionCursor: codex.seedProjectionCursor,
+      extendedLengthPath: codex.extendedLengthPath,
+    }],
+    ['@agent-continue/contract', {
+      convertCodexToDsh: contract.convertCodexToDsh,
+      convertDshToCodex: contract.convertDshToCodex,
+    }],
+  ]
+
+  const failures: string[] = []
+  let checked = 0
+  for (const [packageName, entries] of mustBeFunctions) {
+    for (const [name, value] of Object.entries(entries)) {
+      checked += 1
+      if (typeof value !== 'function') failures.push(`${packageName}.${name} is ${typeof value}, not a function`)
+    }
+  }
+  assert.deepEqual(failures, [], 'a documented runtime entry point is not callable')
+  assert.equal(checked, 9, 'the nine runtime entry points that matter are all covered')
+
+  // The cross-harness markers have to be the literal strings both sides agree on.
+  assert.equal(contract.TOOL_OUTCOME_UNKNOWN, 'TOOL_OUTCOME_UNKNOWN')
+  assert.equal(contract.RECOVERY_FIELD, 'recovery')
+})
+
+/**
  * List the module basenames in a directory.
  * @param dir - absolute directory path.
  * @returns basenames without extension.
