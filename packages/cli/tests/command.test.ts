@@ -10,7 +10,7 @@ import { execute } from '../src/command.ts'
 import { parseSessionLog } from '../../dsh-adapter/src/format.ts'
 import { readFrames } from '../../dsh-adapter/src/zstd.ts'
 import { encodeArtifact } from '../../dsh-adapter/src/write.ts'
-import { TARGET_ID, initializeRegistry, scratch, writeCodex, writeDsh } from './fixtures.ts'
+import { TARGET_ID, codexRecords, initializeRegistry, scratch, writeCodex, writeDsh } from './fixtures.ts'
 
 function migrateArgs(root: string, from: 'codex' | 'dsh', input: string, home: string): string[] {
   return ['migrate', '--from', from, '--input', input, '--cwd', root, '--target-home', home, '--id', TARGET_ID]
@@ -45,6 +45,38 @@ test('completed tool outputs resolve pending calls in both formats', () => {
   assert.deepEqual(execute(['inspect', '--from', 'dsh', '--input', writeDsh(root, 'completed')]).pendingOperations, [])
   assert.deepEqual(execute(['inspect', '--from', 'dsh', '--input', writeDsh(root, 'pending')]).pendingOperations, [{ callId: 'synthetic-call', name: 'synthetic_tool', state: 'unknown' }])
 })
+
+for (const custom of [false, true]) {
+  test(`Codex inspect preserves explicit unknown recovery markers for ${custom ? 'custom' : 'function'} tool results`, () => {
+    const root = scratch()
+    const records = codexRecords(root, 'completed')
+    const call = records.find((record) => record.payload.type === 'function_call')!
+    const result = records.find((record) => record.payload.type === 'function_call_output')!
+    if (custom) {
+      call.payload.type = 'custom_tool_call'
+      call.payload.input = '{}'
+      delete call.payload.arguments
+      result.payload.type = 'custom_tool_call_output'
+      result.payload.output = [{ type: 'text', text: 'SYNTHETIC PRIVATE RESULT' }]
+    }
+    const input = join(root, 'recovery-rollout.jsonl')
+    const inspect = () => {
+      writeFileSync(input, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+      return execute(['inspect', '--from', 'codex', '--input', input]).pendingOperations
+    }
+    result.payload.isError = true
+    result.payload.recovery = 'TOOL_OUTCOME_UNKNOWN'
+    const pending = [{ callId: 'synthetic-call', name: 'synthetic_tool', state: 'unknown' }]
+    assert.deepEqual(inspect(), pending)
+    result.payload.isError = false
+    assert.deepEqual(inspect(), pending, 'An explicit unknown marker stays conservative even when isError disagrees')
+    result.payload.isError = true
+    delete result.payload.recovery
+    assert.deepEqual(inspect(), [], 'A known failure is not an unknown outcome')
+    result.payload.recovery = 'TOOL_NOT_STARTED'
+    assert.deepEqual(inspect(), [], 'A known unstarted operation is not an unknown execution outcome')
+  })
+}
 
 test('native unknown-outcome repairs remain pending during inspect and migration', () => {
   const root = scratch()

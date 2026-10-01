@@ -72,17 +72,40 @@ test('native continuation receives multiple turns and completed tool results wit
       assert.equal(fixture.requests.length, 1, 'Continuation uses exactly one local synthetic response')
       assert.equal(fixture.credentialHeaderPresent, false)
       const input = fixture.requests[0]!.input as Record<string, unknown>[]
+      const positions: number[] = []
       for (const [index, text] of CONVERSATION_TEXTS.entries()) {
         const role = index % 2 === 0 ? 'user' : 'assistant'
-        assert.ok(input.some((message) => message.role === role && textOfMessage(message) === text), 'Provider input contains each original message in its correct role')
+        const matches = input.flatMap((message, position) => message.role === role && textOfMessage(message) === text ? [position] : [])
+        assert.equal(matches.length, 1, 'Provider input contains each original message exactly once in its correct role')
+        positions.push(matches[0]!)
       }
-      assert.ok(input.some((message) => message.role === 'user' && textOfMessage(message) === followup))
-      assert.ok(input.some((message) => message.type === 'function_call' && message.call_id === 'synthetic-call'), 'Original tool call remains in model history')
-      assert.ok(input.some((message) => message.type === 'function_call_output' && message.call_id === 'synthetic-call' && message.output === 'SYNTHETIC PRIVATE RESULT'), 'Original completed tool result reaches model history unchanged')
+      const followupPositions = input.flatMap((message, position) => message.role === 'user' && textOfMessage(message) === followup ? [position] : [])
+      const callPositions = input.flatMap((message, position) => message.type === 'function_call' && message.call_id === 'synthetic-call' ? [position] : [])
+      const resultPositions = input.flatMap((message, position) => message.type === 'function_call_output' && message.call_id === 'synthetic-call' && message.output === 'SYNTHETIC PRIVATE RESULT' ? [position] : [])
+      assert.equal(followupPositions.length, 1)
+      assert.equal(callPositions.length, 1, 'Original tool call appears exactly once in model history')
+      assert.equal(resultPositions.length, 1, 'Original completed tool result reaches model history exactly once and unchanged')
+      const ordered = [positions[0]!, positions[1]!, callPositions[0]!, resultPositions[0]!, positions[2]!, positions[3]!, followupPositions[0]!]
+      assert.ok(ordered.every((position, index) => index === 0 || position > ordered[index - 1]!), 'Original messages, tool call/result and follow-up retain chronological order')
       assert.ok(!notifications.some((notification) => notification.id !== undefined), 'No native request to execute or approve a historical tool is received')
       const after = await call('thread/items/list', { threadId: TARGET_ID, limit: 20 })
       assert.equal(after.error, undefined)
       assert.ok(JSON.stringify(after.result?.data).includes(CONTINUATION_REPLY), 'Local continuation is appended to the imported thread')
+    })
+    await withServer(binary, home, root, async (call, notifications) => {
+      const resumed = await call('thread/resume', { threadId: TARGET_ID, cwd: root, model: 'offline-probe', modelProvider: 'local-probe', approvalPolicy: 'on-request', sandbox: 'read-only' })
+      assert.equal(resumed.error, undefined)
+      const turns = await call('thread/turns/list', { threadId: TARGET_ID, itemsView: 'full', sortDirection: 'asc', limit: 10 })
+      assert.equal(turns.error, undefined)
+      assert.equal((turns.result?.data as unknown[]).length, 3, 'The original turns and continuation survive a native process restart')
+      const history = await call('thread/items/list', { threadId: TARGET_ID, limit: 20, sortDirection: 'asc' })
+      assert.equal(history.error, undefined)
+      const items = JSON.stringify(history.result?.data)
+      for (const text of [...CONVERSATION_TEXTS, 'SYNTHETIC FOLLOW-UP', CONTINUATION_REPLY]) {
+        assert.ok(items.includes(text), 'Every original and continued message remains readable after restart')
+      }
+      assert.equal(fixture.requests.length, 1, 'Resuming the continued thread makes no additional model request')
+      assert.ok(!notifications.some((notification) => notification.id !== undefined), 'Restarting the native process does not request execution or approval of historical tools')
     })
     const output = report.output as { path: string }
     const restored = parseRollout(readFileSync(output.path, 'utf8'))

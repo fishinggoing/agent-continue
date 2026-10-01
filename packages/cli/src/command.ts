@@ -114,7 +114,9 @@ function pendingOperations(source: Source): PendingOperation[] {
       if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
         pending.set(callId, { callId, name: String(payload.name ?? 'unknown'), state: 'unknown' })
       } else if (payload.type === 'function_call_output' || payload.type === 'custom_tool_call_output') {
-        pending.delete(callId)
+        if (payload.recovery === 'TOOL_OUTCOME_UNKNOWN') {
+          pending.set(callId, pending.get(callId) ?? { callId, name: 'unknown', state: 'unknown' })
+        } else pending.delete(callId)
       }
     }
   } else {
