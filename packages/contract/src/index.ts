@@ -17,3 +17,5 @@ export {
   type ConversionResult as DshToCodexResult,
   type ConvertOptions as DshToCodexOptions,
 } from './dsh-to-codex.ts'
+
+export { RECOVERY_FIELD, TOOL_OUTCOME_UNKNOWN } from './conventions.ts'

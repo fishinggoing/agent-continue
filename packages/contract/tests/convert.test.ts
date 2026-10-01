@@ -37,6 +37,9 @@ test('maps Codex records onto DSH events', () => {
     'turn/start',
     'step/start',
     'user/message',
+    // v4 requires a tool call to be advertised by an assistant message before its
+    // `tool/call`, so the converter inserts one (D3).
+    'assistant/message',
     'tool/call',
     'tool/result',
     'assistant/message',
@@ -44,10 +47,20 @@ test('maps Codex records onto DSH events', () => {
     'turn/end',
   ])
   // The producer is recorded verbatim rather than rewritten to a DSH provider.
-  const assistant = conversion.events.find((event) => event.type === 'assistant/message')!
+  const assistant = conversion.events.filter((event) => event.type === 'assistant/message').at(-1)!
   const source = (assistant.data as { message: { source: { provider: string; model: string } } }).message.source
   assert.equal(source.provider, 'example-provider')
   assert.equal(source.model, 'example-model')
+
+  // The advertisement must match the call exactly: id, name, and arguments are
+  // compared with `!==` by DSH's validator.
+  const advertisement = conversion.events.find((event) => event.type === 'assistant/message')!
+  const blocks = (advertisement.data as { message: { content: { type: string; id: string; name: string; arguments: string }[] } }).message.content
+  assert.deepEqual(blocks, [{ type: 'tool-call', id: 'c-1', name: 'shell', arguments: '{"cmd":"ls"}' }])
+  const call = conversion.events.find((event) => event.type === 'tool/call')!
+  assert.equal((call.data as { callId: string }).callId, blocks[0]!.id)
+  assert.equal((call.data as { arguments: string }).arguments, blocks[0]!.arguments)
+
   // The produced log satisfies the rules DSH enforces on load.
   assert.doesNotThrow(() => parseSessionLog(serializeSessionLog(conversion.header, conversion.events), 4))
 })
@@ -170,4 +183,121 @@ test('reports dropped content blocks instead of claiming a clean mapping', () =>
   // And the DSH side still receives the text block it can read.
   const userEvent = conversion.events.find((event) => event.type === 'user/message')!
   assert.deepEqual((userEvent.data as { content: unknown }).content, [{ type: 'text', text: 'kept' }])
+})
+
+/** Build a Codex rollout fixture from raw record objects. */
+function rolloutOf(records: Record<string, unknown>[]): RolloutRecord[] {
+  return parseRollout(records.map((record) => JSON.stringify(record)).join('\n')).records as RolloutRecord[]
+}
+
+/**
+ * D4: a started call with no result must leave the step and turn open.
+ *
+ * DSH rejects a closer that spans an unresolved started call, and its own
+ * recovery is what supplies the honest `TOOL_OUTCOME_UNKNOWN` result. Closing
+ * the turn here would either be refused or force us to invent an outcome.
+ */
+test('leaves the tail open when a tool call never finished', () => {
+  const records = rolloutOf([
+    { timestamp: 't', ordinal: 0, type: 'session_meta', payload: { id: 'open', cwd: 'F:\\proj' } },
+    { timestamp: 't', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 2, type: 'response_item', payload: { type: 'function_call', id: 'f1', call_id: 'c-1', name: 'shell', arguments: '{}' } },
+    // No `function_call_output` follows: the process died mid-call.
+  ])
+
+  const conversion = convertCodexToDsh(records, { sessionId: 'open', cwd: 'F:\\proj' })
+  const kinds = conversion.events.map((event) => event.type)
+  assert.ok(kinds.includes('tool/call'), 'the call is recorded')
+  assert.ok(!kinds.includes('step/end'), 'the step stays open for DSH recovery to close')
+  assert.ok(!kinds.includes('turn/end'), 'the turn stays open for DSH recovery to close')
+})
+
+test('leaves the tail open when only one of two parallel calls finished', () => {
+  const records = rolloutOf([
+    { timestamp: 't', ordinal: 0, type: 'session_meta', payload: { id: 'partial', cwd: 'F:\\proj' } },
+    { timestamp: 't', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 2, type: 'response_item', payload: { type: 'function_call', id: 'f1', call_id: 'c-1', name: 'a', arguments: '{}' } },
+    { timestamp: 't', ordinal: 3, type: 'response_item', payload: { type: 'function_call', id: 'f2', call_id: 'c-2', name: 'b', arguments: '{}' } },
+    { timestamp: 't', ordinal: 4, type: 'response_item', payload: { type: 'function_call_output', id: 'o1', call_id: 'c-1', output: 'done' } },
+  ])
+
+  const conversion = convertCodexToDsh(records, { sessionId: 'partial', cwd: 'F:\\proj' })
+  const kinds = conversion.events.map((event) => event.type)
+  assert.equal(kinds.filter((kind) => kind === 'tool/call').length, 2, 'both calls are recorded')
+  assert.ok(!kinds.includes('turn/end'), 'the unfinished call keeps the turn open')
+
+  // Both parallel calls are advertised by one assistant message, or DSH would
+  // reject the second with "has no advertised tool lifecycle".
+  const advertisements = conversion.events.filter((event) => event.type === 'assistant/message')
+  assert.equal(advertisements.length, 1, 'one advertisement covers the parallel run')
+  const blocks = (advertisements[0]!.data as { message: { content: { id: string }[] } }).message.content
+  assert.deepEqual(blocks.map((block) => block.id), ['c-1', 'c-2'])
+})
+
+/**
+ * D5: the unknown-outcome marker has to survive a full round trip.
+ *
+ * DSH's recovery writes `error.code = TOOL_OUTCOME_UNKNOWN`; without an explicit
+ * marker the Codex side reads the call as settled. A plain known failure and a
+ * `TOOL_NOT_STARTED` repair are both *not* unknown and must not be marked.
+ */
+test('carries the unknown tool outcome across both directions', () => {
+  const time = 1_780_000_000_000
+  const toolResult = (errorCode: string | undefined, isError: boolean): SessionEvent[] => [
+    { type: 'turn/start', seq: 0, time, data: { turn: 1 } },
+    { type: 'step/start', seq: 1, time, data: { turn: 1, step: 1 } },
+    {
+      type: 'assistant/message', seq: 2, time,
+      data: { turn: 1, step: 1, message: { id: 'a1', role: 'assistant', content: [{ type: 'tool-call', id: 'c-1', name: 'bash', arguments: '{}' }], source: { kind: 'model', provider: 'p', model: 'm' } }, stream: [] },
+      surfaceOp: 'append',
+    },
+    { type: 'tool/call', seq: 3, time, data: { turn: 1, step: 1, callId: 'c-1', name: 'bash', arguments: '{}' } },
+    {
+      type: 'tool/result', seq: 4, time,
+      data: {
+        turn: 1, step: 1,
+        message: { id: 't1', role: 'tool', toolCallId: 'c-1', source: { kind: 'tool', callId: 'c-1' }, content: [{ type: 'text', text: 'interrupted' }], isError },
+        ...(errorCode === undefined ? {} : { error: { name: 'ToolOutcomeUnknownError', code: errorCode } }),
+      },
+      surfaceOp: 'append',
+    },
+    { type: 'step/end', seq: 5, time, data: { turn: 1, step: 1 } },
+    { type: 'turn/end', seq: 6, time, data: { turn: 1, reason: { kind: 'completed' } } },
+  ]
+
+  const outputPayload = (events: SessionEvent[]): Record<string, unknown> => {
+    const conversion = convertDshToCodex(dshHeader, events, { cliVersion: '1.0.0', threadId: 'rt' })
+    const record = conversion.drafts.find((draft) => draft.type === 'response_item'
+      && (draft.payload as { type?: string }).type === 'function_call_output')
+    assert.ok(record !== undefined, 'a function_call_output was produced')
+    return record.payload as Record<string, unknown>
+  }
+
+  const unknown = outputPayload(toolResult('TOOL_OUTCOME_UNKNOWN', true))
+  assert.equal(unknown.isError, true)
+  assert.equal(unknown.recovery, 'TOOL_OUTCOME_UNKNOWN', 'the unknown marker is explicit')
+  assert.equal(unknown.call_id, 'c-1', 'the call id is preserved alongside the marker')
+
+  // A known failure is an error but not an unknown outcome.
+  const failed = outputPayload(toolResult(undefined, true))
+  assert.equal(failed.isError, true)
+  assert.equal(failed.recovery, undefined, 'a known failure carries no recovery marker')
+
+  // A not-started repair means the call never ran; that is not "unknown outcome" either.
+  const notStarted = outputPayload(toolResult('TOOL_NOT_STARTED', true))
+  assert.equal(notStarted.recovery, undefined, 'TOOL_NOT_STARTED is not an unknown outcome')
+
+  // Reverse: the marker must come back as DSH's unknown error, not as a success.
+  const backRecords = rolloutOf([
+    { timestamp: 't', ordinal: 0, type: 'session_meta', payload: { id: 'b', cwd: 'F:\\proj' } },
+    { timestamp: 't', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 2, type: 'response_item', payload: { type: 'function_call', id: 'f1', call_id: 'c-1', name: 'bash', arguments: '{}' } },
+    { timestamp: 't', ordinal: 3, type: 'response_item', payload: { type: 'function_call_output', id: 'o1', call_id: 'c-1', output: 'interrupted', isError: true, recovery: 'TOOL_OUTCOME_UNKNOWN' } },
+  ])
+  const back = convertCodexToDsh(backRecords, { sessionId: 'back', cwd: 'F:\\proj' })
+  const result = back.events.find((event) => event.type === 'tool/result')!
+  const resultData = result.data as { message: { isError?: boolean }; error?: { code?: string } }
+  assert.equal(resultData.message.isError, true, 'the reverse keeps it an error')
+  assert.equal(resultData.error?.code, 'TOOL_OUTCOME_UNKNOWN', 'the reverse restores the unknown code')
+  assert.doesNotThrow(() => parseSessionLog(serializeSessionLog(back.header, back.events), 4))
 })

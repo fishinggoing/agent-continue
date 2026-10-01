@@ -24,6 +24,7 @@
 import type { RolloutRecord, JsonObject } from '../../codex-adapter/src/rollout.ts'
 import { toolOutputText } from '../../codex-adapter/src/rollout.ts'
 import type { SessionEvent, SessionHeader } from '../../dsh-adapter/src/format.ts'
+import { TOOL_OUTCOME_UNKNOWN } from './conventions.ts'
 
 /** How one category of input was handled. */
 export interface MappingTally {
@@ -63,6 +64,16 @@ interface TurnState {
   step: number
   openStep: boolean
   lastAssistantSeen: boolean
+  /**
+   * Call ids that were advertised and started but have no result yet.
+   *
+   * DSH rejects a `step/end` or `turn/end` that closes over an unresolved started
+   * call. Leaving the tail open is the correct import shape: DSH's own recovery
+   * appends a `TOOL_OUTCOME_UNKNOWN` result for exactly this case
+   * (`packages/core/session/src/repair.ts`), which is the honest outcome for a
+   * call we never saw finish.
+   */
+  openCalls: Set<string>
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number }
 }
 
@@ -102,12 +113,19 @@ export function convertCodexToDsh(
 
   const closeStep = (): void => {
     if (turn?.openStep !== true) return
+    // An unresolved started call makes the closer illegal; the tail stays open.
+    if (turn.openCalls.size > 0) return
     push('step/end', { turn: turn.turn, step: turn.step })
     turn.openStep = false
   }
 
   const closeTurn = (reason: JsonObject): void => {
     if (turn === undefined) return
+    if (turn.openCalls.size > 0) {
+      // Leave the step and the turn open for DSH's recovery to balance.
+      turn = undefined
+      return
+    }
     closeStep()
     push('turn/end', { turn: turn.turn, reason })
     turn = undefined
@@ -116,7 +134,7 @@ export function convertCodexToDsh(
   const openTurn = (turnId: string, startedAt: number): void => {
     closeTurn({ kind: 'interrupted' })
     turnCount += 1
-    turn = { turn: turnCount, turnId, startedAt, step: 0, openStep: false, lastAssistantSeen: false }
+    turn = { turn: turnCount, turnId, startedAt, step: 0, openStep: false, lastAssistantSeen: false, openCalls: new Set() }
     push('turn/start', { turn: turn.turn })
   }
 
@@ -132,7 +150,8 @@ export function convertCodexToDsh(
     return current
   }
 
-  for (const record of records) {
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index]!
     const kind = kindOf(record)
     switch (kind) {
       case 'session_meta':
@@ -250,13 +269,49 @@ export function convertCodexToDsh(
       case 'response_item/custom_tool_call': {
         if (turn === undefined) openTurn(`turn-${turnCount + 1}`, Date.parse(record.timestamp) || Date.now())
         const current = beginStep()
-        const callId = String(record.payload.call_id ?? `call-${events.length}`)
-        const name = String(record.payload.name ?? 'unknown')
-        const args = kind === 'response_item/function_call'
-          ? String(record.payload.arguments ?? '')
-          : JSON.stringify(record.payload.input ?? '')
-        push('tool/call', { turn: current.turn, step: current.step, callId, name, arguments: args })
-        tally(kind, 'mapped')
+
+        // Codex emits parallel calls as sibling records; take the whole run so one
+        // assistant message can advertise all of them.
+        const run: { callId: string; name: string; args: string; kind: string }[] = []
+        let probe = index
+        while (probe < records.length) {
+          const candidate = records[probe]!
+          const candidateKind = kindOf(candidate)
+          if (candidateKind !== 'response_item/function_call' && candidateKind !== 'response_item/custom_tool_call') break
+          run.push({
+            callId: String(candidate.payload.call_id ?? `call-${probe}`),
+            name: String(candidate.payload.name ?? 'unknown'),
+            args: candidateKind === 'response_item/function_call'
+              ? String(candidate.payload.arguments ?? '')
+              : JSON.stringify(candidate.payload.input ?? ''),
+            kind: candidateKind,
+          })
+          probe += 1
+        }
+
+        // v4 requires every tool call to be *advertised* by an assistant message in
+        // the same turn and step, before its `tool/call`, with id, name, and
+        // arguments matching exactly (`session-format-v3-to-v4/src/relationships.ts`).
+        // Omitting this is what made DSH reject imported tool sessions with
+        // "has no advertised tool lifecycle".
+        push('assistant/message', {
+          turn: current.turn,
+          step: current.step,
+          message: {
+            id: `msg-advertise-${current.turn}-${current.step}-${run.length}`,
+            role: 'assistant',
+            content: run.map((call) => ({ type: 'tool-call', id: call.callId, name: call.name, arguments: call.args })),
+            source: { kind: 'model', provider, model: fallbackModel },
+          },
+          stream: [],
+        }, 'append')
+
+        for (const call of run) {
+          push('tool/call', { turn: current.turn, step: current.step, callId: call.callId, name: call.name, arguments: call.args })
+          current.openCalls.add(call.callId)
+          tally(call.kind, 'mapped')
+        }
+        index = probe - 1
         break
       }
 
@@ -268,18 +323,28 @@ export function convertCodexToDsh(
         }
         const current = beginStep()
         const callId = String(record.payload.call_id ?? '')
-        push('tool/result', {
-          turn: current.turn,
-          step: current.step,
-          message: {
-            id: String(record.payload.id ?? `tool-${events.length}`),
-            role: 'tool',
-            source: { kind: 'tool', callId },
-            toolCallId: callId,
-            content: [{ type: 'text', text: toolOutputText(record.payload) }],
-            isError: false,
-          },
-        }, 'append')
+        // An explicit recovery marker is the only signal we treat as "unknown
+        // outcome"; a plain known failure stays a plain failure (HANDOFF §9.2.1).
+        const recovery = record.payload.recovery === TOOL_OUTCOME_UNKNOWN
+        const message: JsonObject = {
+          id: String(record.payload.id ?? `tool-${events.length}`),
+          role: 'tool',
+          source: { kind: 'tool', callId },
+          toolCallId: callId,
+          content: [{ type: 'text', text: toolOutputText(record.payload) }],
+        }
+        if (record.payload.isError === true || recovery) message.isError = true
+        else if (record.payload.isError === false) message.isError = false
+        else {
+          // Codex records carry no error flag for successful results. Asserting
+          // `false` would be inventing a fact, so the field is left unset and the
+          // omission is reported instead.
+          tally('tool/result.error-status', 'dropped', 'Codex tool output carries no error flag, so DSH isError is left unset rather than asserted false')
+        }
+        const data: JsonObject = { turn: current.turn, step: current.step, message }
+        if (recovery) data.error = { name: 'ToolOutcomeUnknownError', code: TOOL_OUTCOME_UNKNOWN }
+        push('tool/result', data, 'append')
+        current.openCalls.delete(callId)
         tally(kind, 'mapped')
         break
       }

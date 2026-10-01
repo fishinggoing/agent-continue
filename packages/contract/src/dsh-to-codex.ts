@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto'
 import type { RolloutDraft } from '../../codex-adapter/src/rollout.ts'
 import type { JsonObject } from '../../codex-adapter/src/rollout.ts'
 import type { SessionEvent, SessionHeader } from '../../dsh-adapter/src/format.ts'
+import { RECOVERY_FIELD, TOOL_OUTCOME_UNKNOWN } from './conventions.ts'
 
 /** How one category of input was handled. */
 export interface MappingTally {
@@ -257,13 +258,25 @@ export function convertDshToCodex(
         const source = (message.source ?? {}) as JsonObject
         const resolved = typeof source.callId === 'string' ? source.callId : callId
         openCalls.delete(resolved)
-        push('response_item', {
+        // HANDOFF §9.2.1: an unknown outcome must survive the migration as an
+        // explicit marker, or the target reads the call as settled. A plain known
+        // failure keeps `isError` and gets no recovery marker.
+        const error = (data.error ?? {}) as JsonObject
+        const unknown = error.code === TOOL_OUTCOME_UNKNOWN
+        const payload: JsonObject = {
           type: 'function_call_output',
           id: `fco_${resolved}`,
           call_id: resolved,
           output: textOf(message.content),
           internal_chat_message_metadata_passthrough: { turn_id: turn.turnId },
-        }, iso(atMs))
+        }
+        if (unknown) {
+          payload.isError = true
+          payload[RECOVERY_FIELD] = TOOL_OUTCOME_UNKNOWN
+        } else if (message.isError === true) {
+          payload.isError = true
+        }
+        push('response_item', payload, iso(atMs))
         tally(kind, 'mapped')
         break
       }
