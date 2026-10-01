@@ -56,6 +56,15 @@ export interface ConversionResult {
   losses: string[]
 }
 
+interface DshUsage {
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  totalTokens?: number
+  reasoningTokens?: number
+}
+
 /** Turn accumulator used while walking records. */
 interface TurnState {
   turn: number
@@ -75,7 +84,7 @@ interface TurnState {
    * DSH's own recovery would.
    */
   openCalls: Map<string, number>
-  usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number }
+  usage?: DshUsage
 }
 
 /**
@@ -276,17 +285,16 @@ export function convertCodexToDsh(
 
       case 'token_usage_record': {
         const usage = record.payload.turn_token_usage ?? record.payload.usage
-        if (turn !== undefined && isUsage(usage)) {
-          turn.usage = {
-            inputTokens: numberOr(usage.input_tokens),
-            outputTokens: numberOr(usage.output_tokens),
-            cacheReadTokens: numberOr(usage.cached_input_tokens),
-            cacheWriteTokens: numberOr(usage.cache_write_input_tokens),
-            totalTokens: numberOr(usage.total_tokens),
-          }
+        if (turn === undefined) {
+          tally(kind, 'dropped', 'usage record had no open turn')
+          break
+        }
+        const converted = convertUsage(usage)
+        turn.usage = converted.usage
+        if (converted.usage === undefined) tally(kind, 'dropped', converted.losses.join('; '))
+        else {
           tally(kind, 'mapped')
-        } else {
-          tally(kind, 'dropped', 'usage record had no open turn or no recognizable counters')
+          if (converted.losses.length > 0) tally('token_usage_record.fields', 'dropped', converted.losses.join('; '))
         }
         break
       }
@@ -557,22 +565,45 @@ function toDshContent(content: unknown): { blocks: JsonObject[]; dropped: number
   return { blocks, dropped }
 }
 
-/**
- * Check for a usage object.
- * @param value - candidate.
- * @returns true when the value looks like a usage counter object.
- */
-function isUsage(value: unknown): value is JsonObject {
-  return typeof value === 'object' && value !== null && 'total_tokens' in value
+function isTokenCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
-/**
- * Read a counter defensively.
- * @param value - candidate counter.
- * @returns the number, or 0 when absent.
- */
-function numberOr(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+function convertUsage(value: unknown): { usage?: DshUsage; losses: string[] } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { losses: ['usage record had no recognizable counters; usage omitted'] }
+  }
+  const source = value as JsonObject
+  if (!isTokenCount(source.input_tokens) || !isTokenCount(source.output_tokens)) {
+    return { losses: ['input_tokens and output_tokens must both be non-negative safe integers; usage omitted rather than filled with zero'] }
+  }
+  const usage: DshUsage = { inputTokens: source.input_tokens, outputTokens: source.output_tokens }
+  const losses: string[] = []
+  for (const [sourceKey, targetKey] of [
+    ['cached_input_tokens', 'cacheReadTokens'],
+    ['cache_write_input_tokens', 'cacheWriteTokens'],
+  ] as const) {
+    if (!Object.hasOwn(source, sourceKey)) continue
+    const count = source[sourceKey]
+    if (!isTokenCount(count)) return { losses: [`${sourceKey} is not a non-negative safe integer; usage omitted because uncached input cannot be determined`] }
+    usage[targetKey] = count
+  }
+  const cached = (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0)
+  if (!Number.isSafeInteger(cached) || cached > source.input_tokens) {
+    return { losses: ['cache counters exceed aggregate input_tokens; usage omitted rather than emitting negative uncached input'] }
+  }
+  usage.inputTokens -= cached
+  if (Object.hasOwn(source, 'total_tokens')) {
+    if (isTokenCount(source.total_tokens) && source.total_tokens === source.input_tokens + source.output_tokens) {
+      usage.totalTokens = source.total_tokens
+    } else losses.push('total_tokens is invalid or inconsistent with aggregate input/output; totalTokens omitted')
+  }
+  if (Object.hasOwn(source, 'reasoning_output_tokens')) {
+    if (isTokenCount(source.reasoning_output_tokens) && source.reasoning_output_tokens <= source.output_tokens) {
+      usage.reasoningTokens = source.reasoning_output_tokens
+    } else losses.push('reasoning_output_tokens is invalid or exceeds output_tokens; reasoningTokens omitted')
+  }
+  return { usage, losses }
 }
 
 /**

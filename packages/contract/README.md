@@ -73,7 +73,7 @@ const { header: h, events: e, tallies: t, losses: l } = convertCodexToDsh(record
 | 厂商不透明推理记录 | Codex 的 `encrypted_content`、DSH 的 reasoning 块。**不承诺跨账号、跨厂商或跨模型可用**，只能原样保存 |
 | 工具名与参数 schema | 两边工具集不同。转换保持 `name` 与 `arguments` 原样，但目标 harness 未必认识那个工具 |
 | 权限/审批状态 | Codex 的 approval 是会话级设置，DSH 的 SDK 没有审批方法 |
-| token 计量口径 | Codex 有独立 `token_usage_record`，DSH 只把 `usage` 挂在 `assistant/message` 上 —— 数值不可直接比较，且本例中我们都选择不搬运 |
+| token 计量口径 | Codex 有独立 `token_usage_record`，DSH 把 `usage` 挂在 `assistant/message` 上；只迁移可识别的计数，缺失或不一致的信息报告损失，不承诺计费等价 |
 | 未闭合工具调用的语义 | Codex 侧没有"结果未知"的表达；建议在恢复报告里标注，而不是当作失败重放 |
 
 ---
@@ -92,7 +92,7 @@ const { header: h, events: e, tallies: t, losses: l } = convertCodexToDsh(record
 | `response_item/custom_tool_call_output` | `tool/result`（surface） | `output` 是内容块数组，先归一 |
 | `event_msg/task_started` | `turn/start` | |
 | `event_msg/task_complete` | `turn/end` reason `{kind:'completed'}` | |
-| `token_usage_record` | `assistant/message.usage` | 字段逐个对应 |
+| `token_usage_record` | `assistant/message.usage` | 必填 input/output 无效时省略 usage 并报告损失；可选计数缺失时不写，不补 0；保留 reasoning 计数；已记录的缓存计数从总输入中扣除，避免 DSH 的互斥计数重复计算；缺失或不一致的 total 不写 |
 
 `assistant/message.source` 用 **Codex 原值**（`model_provider` / `turn_context.model`），
 不替换成 DSH 的 provider —— 记录"这条消息实际由谁产生"才是诚实的。

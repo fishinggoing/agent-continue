@@ -9,7 +9,10 @@ export interface ResponsesFixture {
   credentialHeaderPresent: boolean
 }
 
-export async function withResponsesFixture(steps: (fixture: ResponsesFixture) => Promise<void>): Promise<void> {
+export async function withResponsesFixture(
+  steps: (fixture: ResponsesFixture) => Promise<void>,
+  usage: Record<string, unknown> = { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
+): Promise<void> {
   const fixture: ResponsesFixture = { baseUrl: '', requests: [], credentialHeaderPresent: false }
   const server = createServer(async (request, response) => {
     try {
@@ -36,7 +39,7 @@ export async function withResponsesFixture(steps: (fixture: ResponsesFixture) =>
         { type: 'response.output_text.delta', item_id: id, output_index: 0, content_index: 0, delta: CONTINUATION_REPLY },
         { type: 'response.output_text.done', item_id: id, output_index: 0, content_index: 0, text: CONTINUATION_REPLY },
         { type: 'response.output_item.done', output_index: 0, item: message },
-        { type: 'response.completed', response: { id: `resp_fixture_${fixture.requests.length}`, status: 'completed', output: [message], usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+        { type: 'response.completed', response: { id: `resp_fixture_${fixture.requests.length}`, status: 'completed', output: [message], usage } },
       ]
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
       for (const event of events) response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)

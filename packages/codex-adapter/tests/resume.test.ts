@@ -20,7 +20,7 @@ import { spawnSync } from 'node:child_process'
 import { statSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { registerThread, seedProjectionCursor, writeRollout, type RolloutDraft } from '../src/write.ts'
+import { registerThread, writeRollout, type RolloutDraft } from '../src/write.ts'
 
 /** The provider and model the probe home is configured with. */
 const PROBE_PROVIDER = 'example-provider'
@@ -110,7 +110,6 @@ test('a hand-written thread is resumed by the Codex CLI', (t) => {
     firstUserMessage: question,
     originator: 'codex_exec',
   })
-  seedProjectionCursor(join(home, 'thread_history_1.sqlite'), id)
   t.diagnostic(`wrote ${written.path} (${written.bytes} bytes, ${written.records} records) and registered the thread`)
 
   const before = statSync(written.path).size

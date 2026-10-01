@@ -9,13 +9,22 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { existsSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { mkdtempSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
 
 import { findArtifacts, readArtifact, sessionRoot } from '../../dsh-adapter/tests/corpus.ts'
-import { registerThread, seedProjectionCursor, writeRollout } from '../../codex-adapter/src/write.ts'
+import { registerThread, writeRollout } from '../../codex-adapter/src/write.ts'
+import { writeArtifact } from '../../dsh-adapter/src/write.ts'
+import { dshLog } from '../../cli/tests/fixtures.ts'
 import { convertDshToCodex } from '../src/dsh-to-codex.ts'
+
+function usableDirectory(value: unknown): value is string {
+  if (typeof value !== 'string' || !isAbsolute(value)) return false
+  try { return statSync(value).isDirectory() } catch { return false }
+}
 
 test('converts a real DSH session into a thread Codex resumes', async (t) => {
   let paths: string[]
@@ -28,6 +37,7 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
 
   // A session whose own cwd exists: Codex runs the resumed turn in that directory.
   let source: { path: string; artifact: ReturnType<typeof readArtifact> } | undefined
+  let unavailableDirectories = 0
   for (const path of paths) {
     let artifact: ReturnType<typeof readArtifact>
     try {
@@ -38,14 +48,19 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
     const cwd = artifact.header.cwd
     if (artifact.header.version !== 4) continue
     if (artifact.header.parentSession !== undefined || artifact.header.origin !== undefined) continue
-    if (typeof cwd !== 'string' || !existsSync(cwd)) continue
     if (!artifact.records.some((record) => record.type === 'user/message')) continue
     if (!artifact.records.some((record) => record.type === 'assistant/message')) continue
+    if (!usableDirectory(cwd)) {
+      unavailableDirectories += 1
+      continue
+    }
     source = { path, artifact }
     break
   }
   if (source === undefined) {
-    t.skip('no suitable DSH session in the store (version 4, top-level, existing cwd, has messages)')
+    t.skip(unavailableDirectories > 0
+      ? `no usable source working directory (${unavailableDirectories} missing, non-directory or non-absolute cwd)`
+      : 'no suitable DSH session in the store (version 4, top-level, existing cwd, has messages)')
     return
   }
 
@@ -71,6 +86,10 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
     t.diagnostic('skipping harness acceptance: set CODEX_CLI and CODEX_PROBE_HOME')
     return
   }
+  if (!usableDirectory(cwd)) {
+    t.skip('source working directory became unavailable before native acceptance')
+    return
+  }
 
   // A fresh UUID: Codex resolves `resume` by UUID first, and reusing the DSH id
   // would collide with whatever already registered it.
@@ -92,10 +111,13 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
     originator: 'codex_exec',
     cliVersion,
   }, { overwrite: true })
-  seedProjectionCursor(join(home, 'thread_history_1.sqlite'), threadId)
   t.diagnostic(`wrote ${written.path} (${written.bytes} bytes, ${written.records} records) and registered ${threadId}`)
 
   const before = statSync(written.path).size
+  if (!usableDirectory(cwd)) {
+    t.skip('source working directory became unavailable before spawning Codex')
+    return
+  }
   const result = spawnSync(cli, ['exec', 'resume', threadId, 'reply with: ok'], {
     cwd,
     env: { ...process.env, CODEX_HOME: home },
@@ -132,3 +154,36 @@ test('converts a real DSH session into a thread Codex resumes', async (t) => {
     history.close()
   }
 })
+
+for (const scenario of ['missing', 'non-directory'] as const) {
+  test(`native acceptance preflight skips ${scenario} source cwd before any binary launch`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-continue-cwd-'))
+    const cwd = join(root, 'unavailable-source-workspace')
+    if (scenario === 'non-directory') writeFileSync(cwd, 'synthetic regular file, not a workspace')
+    const sessions = join(root, 'source-sessions')
+    const codexHome = join(root, 'codex-home')
+    const dshHome = join(root, 'dsh-home')
+    mkdirSync(codexHome)
+    mkdirSync(dshHome)
+    const source = dshLog(cwd, 'none')
+    writeArtifact(sessions, { ...source.header, id: randomUUID() }, source.events)
+    const result = spawnSync(process.execPath, [
+      '--test', '--test-reporter=tap',
+      '--test-name-pattern=^converts a real DSH session into a thread Codex resumes$',
+      fileURLToPath(import.meta.url),
+    ], {
+      cwd: root,
+      env: {
+        SystemRoot: process.env.SystemRoot, PATH: process.env.PATH, TEMP: process.env.TEMP, TMP: process.env.TMP,
+        USERPROFILE: root, HOME: root, APPDATA: root, LOCALAPPDATA: root,
+        CODEX_HOME: codexHome, DSH_HOME: dshHome, DSH_SESSION_ROOT: sessions,
+        CODEX_CLI: join(root, 'must-not-spawn.exe'), CODEX_PROBE_HOME: codexHome,
+      },
+      encoding: 'utf8', timeout: 15_000, windowsHide: true,
+    })
+    assert.equal(result.error, undefined)
+    assert.equal(result.status, 0, `${result.stdout}${result.stderr}`)
+    assert.match(result.stdout, /# SKIP no usable source working directory/)
+    assert.doesNotMatch(`${result.stdout}${result.stderr}`, /ENOENT|codex exec resume failed/)
+  })
+}
