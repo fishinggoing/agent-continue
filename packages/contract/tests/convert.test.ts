@@ -241,6 +241,47 @@ test('leaves the tail open when only one of two parallel calls finished', () => 
  * marker the Codex side reads the call as settled. A plain known failure and a
  * `TOOL_NOT_STARTED` repair are both *not* unknown and must not be marked.
  */
+/**
+ * An unresolved call is a barrier, and how it is crossed depends on what follows.
+ *
+ * DSH rejects `step/end` and `turn/end` over an unresolved call (`closeTools`)
+ * and rejects `turn/start` while a turn is open. So:
+ *  - if the interrupted call ends the rollout, the tail must be left open (D4);
+ *  - if more turns follow, the call has to be resolved the way DSH's own recovery
+ *    would, or the later turns are unrepresentable.
+ */
+test('resolves an interrupted call when later turns follow, instead of dropping them', () => {
+  const records = rolloutOf([
+    { timestamp: 't', ordinal: 0, type: 'session_meta', payload: { id: 'nest', cwd: 'F:\\proj' } },
+    { timestamp: 't', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 2, type: 'response_item', payload: { type: 'function_call', id: 'f1', call_id: 'c-1', name: 'a', arguments: '{}' } },
+    { timestamp: 't', ordinal: 3, type: 'event_msg', payload: { type: 'task_complete', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 4, type: 'event_msg', payload: { type: 'task_started', turn_id: 't2' } },
+    { timestamp: 't', ordinal: 5, type: 'response_item', payload: { type: 'message', id: 'm1', role: 'user', content: [{ type: 'input_text', text: 'LATER TURN TEXT' }] } },
+  ])
+
+  const conversion = convertCodexToDsh(records, { sessionId: 'nest', cwd: 'F:\\proj' })
+  assert.equal(conversion.events.filter((event) => event.type === 'turn/start').length, 2,
+    'the follow-up turn is preserved')
+  assert.equal(conversion.events.filter((event) => event.type === 'turn/end').length, 2,
+    'both turns close')
+  assert.equal(conversion.tallies['records-after-open-tail']?.dropped ?? 0, 0,
+    'nothing had to be abandoned')
+  assert.ok(JSON.stringify(conversion.events).includes('LATER TURN TEXT'))
+
+  // The unresolved call is resolved as an explicit unknown outcome, never a success.
+  const synthesized = conversion.events.find((event) => event.type === 'tool/result')!
+  const data = synthesized.data as { error?: { code?: string }; message: { isError?: boolean; toolCallId?: string } }
+  assert.equal(data.error?.code, 'TOOL_OUTCOME_UNKNOWN')
+  assert.equal(data.message.isError, true)
+  assert.equal(data.message.toolCallId, 'c-1')
+  assert.deepEqual(synthesized.sourceEventSeqs, [3], 'it cites the tool/call it resolves')
+  assert.equal(conversion.tallies['tool/result.synthesized-unknown']?.mapped, 1)
+
+  // And the whole thing has to satisfy DSH's own admission rules.
+  assert.doesNotThrow(() => parseSessionLog(serializeSessionLog(conversion.header, conversion.events), 4))
+})
+
 test('carries the unknown tool outcome across both directions', () => {
   const time = 1_780_000_000_000
   const toolResult = (errorCode: string | undefined, isError: boolean): SessionEvent[] => [
@@ -300,4 +341,20 @@ test('carries the unknown tool outcome across both directions', () => {
   assert.equal(resultData.message.isError, true, 'the reverse keeps it an error')
   assert.equal(resultData.error?.code, 'TOOL_OUTCOME_UNKNOWN', 'the reverse restores the unknown code')
   assert.doesNotThrow(() => parseSessionLog(serializeSessionLog(back.header, back.events), 4))
+
+  // D9: a source with no error flag at all must not be turned into `isError: false`.
+  // Codex omits the flag on successful results, so asserting false would invent a
+  // fact; the omission has to be visible in the loss report instead.
+  const plainRecords = rolloutOf([
+    { timestamp: 't', ordinal: 0, type: 'session_meta', payload: { id: 'p', cwd: 'F:\\proj' } },
+    { timestamp: 't', ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1' } },
+    { timestamp: 't', ordinal: 2, type: 'response_item', payload: { type: 'function_call', id: 'f1', call_id: 'c-1', name: 'bash', arguments: '{}' } },
+    { timestamp: 't', ordinal: 3, type: 'response_item', payload: { type: 'function_call_output', id: 'o1', call_id: 'c-1', output: 'fine' } },
+  ])
+  const plain = convertCodexToDsh(plainRecords, { sessionId: 'plain', cwd: 'F:\\proj' })
+  const plainMessage = (plain.events.find((event) => event.type === 'tool/result')!.data as
+    { message: Record<string, unknown> }).message
+  assert.equal('isError' in plainMessage, false, 'an unknown error status is left unset, not asserted false')
+  assert.ok(plain.losses.some((line) => line.includes('tool/result.error-status')),
+    'the omission is reported to the caller')
 })

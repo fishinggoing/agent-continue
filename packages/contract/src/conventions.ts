@@ -24,3 +24,14 @@ export const TOOL_OUTCOME_UNKNOWN = 'TOOL_OUTCOME_UNKNOWN'
  * unknown; consumers must not infer it from the result text.
  */
 export const RECOVERY_FIELD = 'recovery'
+
+/**
+ * The message body DSH itself writes for an interrupted-but-started call.
+ *
+ * Copied verbatim from `packages/core/session/src/repair.ts` (`CLOSER_TEXT.interrupted.started`).
+ * When an import has to close a turn that still holds an unresolved call, it
+ * resolves that call exactly the way DSH's own recovery would rather than
+ * inventing different wording — the record has to read as an unknown outcome,
+ * not as a result this migration made up.
+ */
+export const TOOL_OUTCOME_UNKNOWN_TEXT = 'The tool call was interrupted after it was recorded, but no result was durably recorded. Its outcome is unknown. Decide whether to retry from the tool semantics: retry only if the operation is read-only or idempotent; if it may have side effects, first verify external state or ask the user. Do not retry blindly.'

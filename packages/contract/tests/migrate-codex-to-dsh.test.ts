@@ -96,3 +96,51 @@ test('converts a real Codex rollout into a session DSH accepts', async (t) => {
     assert.equal(resumed.error, undefined, `session/resume failed: ${JSON.stringify(resumed.error)}`)
   })
 })
+
+/**
+ * The open-tail shape must be loadable, not merely well-formed.
+ *
+ * A source turn with an unresolved tool call can be imported only as a log whose
+ * tail is left open for DSH's recovery, and the import then has to stop: DSH
+ * rejects `turn/start` while a turn is open. This asserts the real harness
+ * accepts that truncated artifact — the unit test only proves we emit it.
+ */
+test('DSH accepts an import truncated at an open tail', async (t) => {
+  const cli = process.env.DSH_CLI
+  const home = process.env.DSH_PROBE_HOME
+  if (!cli || !home) {
+    t.skip('set DSH_CLI and DSH_PROBE_HOME to run the harness acceptance test')
+    return
+  }
+  const cwd = process.env.DSH_PROBE_CWD ?? process.cwd()
+  const sessionId = `open-tail-${Date.now().toString(36)}`
+  const t0 = Date.now()
+
+  const records = [
+    { timestamp: new Date(t0).toISOString(), ordinal: 0, type: 'session_meta', payload: { id: sessionId, cwd, model_provider: 'example-provider' } },
+    { timestamp: new Date(t0).toISOString(), ordinal: 1, type: 'event_msg', payload: { type: 'task_started', turn_id: 't1', started_at: Math.floor(t0 / 1000) } },
+    { timestamp: new Date(t0).toISOString(), ordinal: 2, type: 'response_item', payload: { type: 'message', id: 'm1', role: 'user', content: [{ type: 'input_text', text: 'run the tool' }] } },
+    { timestamp: new Date(t0).toISOString(), ordinal: 3, type: 'turn_context', payload: { turn_id: 't1', cwd, model: 'example-model' } },
+    // Started, never finished: the import must leave the tail open.
+    { timestamp: new Date(t0).toISOString(), ordinal: 4, type: 'response_item', payload: { type: 'function_call', id: 'f1', call_id: 'c-1', name: 'shell', arguments: '{"cmd":"ls"}' } },
+    { timestamp: new Date(t0).toISOString(), ordinal: 5, type: 'event_msg', payload: { type: 'task_complete', turn_id: 't1', started_at: Math.floor(t0 / 1000), completed_at: Math.floor(t0 / 1000) } },
+  ].map((record) => JSON.stringify(record)).join('\n')
+
+  const conversion = convertCodexToDsh(parseRollout(records).records, { sessionId, cwd })
+  assert.equal(conversion.events.filter((event) => event.type === 'turn/end').length, 0, 'the tail is open')
+
+  const written = writeArtifact(join(home, 'sessions'), conversion.header, conversion.events, { overwrite: true })
+  t.diagnostic(`wrote ${written.path} (${written.bytes} bytes)`)
+  t.diagnostic(`losses: ${conversion.losses.join(' | ') || '(none)'}`)
+
+  await withAcp({ cli, home, profile: process.env.DSH_PROBE_PROFILE ?? 'probe-acp', timeoutMs: 120_000 }, async (call) => {
+    const listed = await call('session/list', { cwd })
+    assert.equal(listed.error, undefined, `session/list failed: ${JSON.stringify(listed.error)}`)
+    const sessions = (listed.result?.sessions ?? []) as { sessionId: string }[]
+    assert.ok(sessions.some((session) => session.sessionId === sessionId), 'DSH lists the truncated session')
+
+    const resumed = await call('session/resume', { sessionId, cwd })
+    assert.equal(resumed.error, undefined,
+      `DSH rejected the open-tail import (its recovery is supposed to balance it): ${JSON.stringify(resumed.error)}`)
+  })
+})

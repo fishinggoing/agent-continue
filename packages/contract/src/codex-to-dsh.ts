@@ -24,7 +24,7 @@
 import type { RolloutRecord, JsonObject } from '../../codex-adapter/src/rollout.ts'
 import { toolOutputText } from '../../codex-adapter/src/rollout.ts'
 import type { SessionEvent, SessionHeader } from '../../dsh-adapter/src/format.ts'
-import { TOOL_OUTCOME_UNKNOWN } from './conventions.ts'
+import { TOOL_OUTCOME_UNKNOWN, TOOL_OUTCOME_UNKNOWN_TEXT } from './conventions.ts'
 
 /** How one category of input was handled. */
 export interface MappingTally {
@@ -65,15 +65,16 @@ interface TurnState {
   openStep: boolean
   lastAssistantSeen: boolean
   /**
-   * Call ids that were advertised and started but have no result yet.
+   * Advertised and started calls, keyed by call id, valued by their `tool/call`
+   * sequence number.
    *
-   * DSH rejects a `step/end` or `turn/end` that closes over an unresolved started
-   * call. Leaving the tail open is the correct import shape: DSH's own recovery
-   * appends a `TOOL_OUTCOME_UNKNOWN` result for exactly this case
-   * (`packages/core/session/src/repair.ts`), which is the honest outcome for a
-   * call we never saw finish.
+   * DSH rejects a `step/end` or `turn/end` that closes over an unresolved call
+   * (`session-format-v3-to-v4/src/relationships.ts`, `closeTools`), and rejects
+   * `turn/start` while a turn is open. That makes an unresolved call a hard
+   * barrier: the import either stops there or resolves the call exactly the way
+   * DSH's own recovery would.
    */
-  openCalls: Set<string>
+  openCalls: Map<string, number>
   usage?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number; totalTokens: number }
 }
 
@@ -104,6 +105,31 @@ export function convertCodexToDsh(
   let turn: TurnState | undefined
   let turnCount = 0
   let fallbackModel = 'unknown'
+  /**
+   * Set when a turn had to be left open for DSH recovery.
+   *
+   * DSH rejects `turn/start` while a turn is open
+   * (`session-format-v3-to-v4/src/relationships.ts`: "turn/start does not open
+   * the expected turn"), so once a tail is left open the import has to stop
+   * there. Everything after it is unrepresentable, not silently dropped.
+   */
+  let stopped = false
+  let stoppedAtIndex = -1
+  /** Index of the record being processed, for decisions that need lookahead. */
+  let currentIndex = -1
+  /**
+   * Number of `task_started` records at or after each index.
+   *
+   * Used to tell "the interrupted call is the end of the story" from "more turns
+   * follow". The boundary is inclusive because this decision is usually reached
+   * *from* the turn-opening record itself: `openTurn` closes the previous turn
+   * first, so excluding the current index would hide the very turn being opened.
+   */
+  const startsAtOrAfter = new Array<number>(records.length + 1).fill(0)
+  for (let i = records.length - 1; i >= 0; i -= 1) {
+    const isStart = records[i]!.type === 'event_msg' && records[i]!.payload.type === 'task_started'
+    startsAtOrAfter[i] = startsAtOrAfter[i + 1]! + (isStart ? 1 : 0)
+  }
 
   const push = (type: string, data: JsonObject, surfaceOp?: 'append'): void => {
     const event: SessionEvent = { type, seq: events.length, time: eventTime(records, events.length, createdAt), data }
@@ -122,20 +148,65 @@ export function convertCodexToDsh(
   const closeTurn = (reason: JsonObject): void => {
     if (turn === undefined) return
     if (turn.openCalls.size > 0) {
-      // Leave the step and the turn open for DSH's recovery to balance.
-      turn = undefined
-      return
+      if (startsAtOrAfter[currentIndex]! > 0) {
+        // More turns follow, so the tail cannot be left open: DSH forbids closing
+        // a step or turn over an unresolved call and forbids opening a turn while
+        // one is open. Resolve each call the way DSH's own recovery would — an
+        // explicit unknown outcome, never a fabricated success — then continue.
+        for (const [callId, callSeq] of turn.openCalls) {
+          push('tool/result', {
+            turn: turn.turn,
+            step: turn.step,
+            message: {
+              id: `interrupted-tool-result-${callId}-${events.length}`,
+              role: 'tool',
+              toolCallId: callId,
+              isError: true,
+              source: { kind: 'tool', callId },
+              content: [{ type: 'text', text: TOOL_OUTCOME_UNKNOWN_TEXT }],
+            },
+            error: { name: 'ToolOutcomeUnknownError', code: TOOL_OUTCOME_UNKNOWN },
+          }, 'append')
+          events[events.length - 1]!.sourceEventSeqs = [callSeq]
+          tally('tool/result.synthesized-unknown', 'mapped')
+        }
+        turn.openCalls.clear()
+      } else {
+        // The interrupted call is the end of the rollout: leave the step and turn
+        // open and stop, so DSH's recovery balances them.
+        stopped = true
+        turn = undefined
+        return
+      }
     }
     closeStep()
     push('turn/end', { turn: turn.turn, reason })
     turn = undefined
   }
 
-  const openTurn = (turnId: string, startedAt: number): void => {
+  /**
+   * Open the next turn.
+   * @param turnId - source turn id.
+   * @param startedAt - turn start in epoch milliseconds.
+   * @returns true when a turn is now open; false when an earlier open tail blocked it.
+   */
+  const openTurn = (turnId: string, startedAt: number): boolean => {
     closeTurn({ kind: 'interrupted' })
+    if (stopped) return false
     turnCount += 1
-    turn = { turn: turnCount, turnId, startedAt, step: 0, openStep: false, lastAssistantSeen: false, openCalls: new Set() }
+    turn = { turn: turnCount, turnId, startedAt, step: 0, openStep: false, lastAssistantSeen: false, openCalls: new Map() }
     push('turn/start', { turn: turn.turn })
+    return true
+  }
+
+  /**
+   * Ensure an open turn exists, opening one when the source omitted its boundary.
+   * @param atMs - timestamp to use for a synthesised turn.
+   * @returns true when a turn is open.
+   */
+  const ensureTurn = (atMs: number): boolean => {
+    if (turn !== undefined) return true
+    return openTurn(`turn-${turnCount + 1}`, atMs)
   }
 
   const beginStep = (): TurnState => {
@@ -152,6 +223,13 @@ export function convertCodexToDsh(
 
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!
+    currentIndex = index
+    // A turn was left open for DSH recovery; no further turn may be opened, so
+    // the rest of the rollout is unrepresentable.
+    if (stopped) {
+      if (stoppedAtIndex < 0) stoppedAtIndex = index
+      continue
+    }
     const kind = kindOf(record)
     switch (kind) {
       case 'session_meta':
@@ -165,7 +243,10 @@ export function convertCodexToDsh(
       case 'event_msg/task_started': {
         const turnId = String(record.payload.turn_id ?? `turn-${turnCount + 1}`)
         const startedAt = typeof record.payload.started_at === 'number' ? record.payload.started_at * 1000 : Date.now()
-        openTurn(turnId, startedAt)
+        if (!openTurn(turnId, startedAt)) {
+          tally(kind, 'dropped', 'no turn may open after a tail was left open for DSH recovery')
+          break
+        }
         tally(kind, 'mapped')
         break
       }
@@ -184,7 +265,10 @@ export function convertCodexToDsh(
         if (typeof record.payload.model === 'string') fallbackModel = record.payload.model
         if (turn === undefined) {
           const turnId = String(record.payload.turn_id ?? `turn-${turnCount + 1}`)
-          openTurn(turnId, Date.parse(record.timestamp) || Date.now())
+          if (!openTurn(turnId, Date.parse(record.timestamp) || Date.now())) {
+            tally(kind, 'dropped', 'no turn may open after a tail was left open for DSH recovery')
+            break
+          }
         }
         tally(kind, 'mapped')
         break
@@ -227,7 +311,10 @@ export function convertCodexToDsh(
           tally(kind, 'dropped', 'message carried no content blocks')
           break
         }
-        if (turn === undefined) openTurn(`turn-${turnCount + 1}`, Date.parse(record.timestamp) || Date.now())
+        if (!ensureTurn(Date.parse(record.timestamp) || Date.now())) {
+          tally(kind, 'dropped', 'no turn may open after a tail was left open for DSH recovery')
+          break
+        }
         if (role === 'assistant') {
           const current = beginStep()
           const content = toDshContent(record.payload.content)
@@ -267,7 +354,10 @@ export function convertCodexToDsh(
 
       case 'response_item/function_call':
       case 'response_item/custom_tool_call': {
-        if (turn === undefined) openTurn(`turn-${turnCount + 1}`, Date.parse(record.timestamp) || Date.now())
+        if (!ensureTurn(Date.parse(record.timestamp) || Date.now())) {
+          tally(kind, 'dropped', 'no turn may open after a tail was left open for DSH recovery')
+          break
+        }
         const current = beginStep()
 
         // Codex emits parallel calls as sibling records; take the whole run so one
@@ -308,7 +398,9 @@ export function convertCodexToDsh(
 
         for (const call of run) {
           push('tool/call', { turn: current.turn, step: current.step, callId: call.callId, name: call.name, arguments: call.args })
-          current.openCalls.add(call.callId)
+          // Remember the sequence number so a synthesised unknown result can cite
+          // it, exactly as DSH's own recovery does.
+          current.openCalls.set(call.callId, events.length - 1)
           tally(call.kind, 'mapped')
         }
         index = probe - 1
@@ -355,6 +447,17 @@ export function convertCodexToDsh(
     }
   }
   closeTurn({ kind: 'interrupted' })
+
+  if (stoppedAtIndex >= 0) {
+    // Reported as one loss rather than one per record: the cause is a single
+    // decision (stop at the open tail), not many independent omissions.
+    tally(
+      'records-after-open-tail',
+      'dropped',
+      `import stopped at record ${stoppedAtIndex}: an earlier turn was left open for DSH recovery, and DSH rejects opening a turn while one is open`,
+      records.length - stoppedAtIndex,
+    )
+  }
 
   const header: SessionHeader = {
     type: 'session',
