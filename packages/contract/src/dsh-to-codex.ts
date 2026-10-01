@@ -124,6 +124,7 @@ export function convertDshToCodex(
   const loggedCalls = new Map<string, SessionEvent>()
   const advertisedCalls = new Set<string>()
   const settledCalls = new Set<string>()
+  const unresolvedOutcomes = new Set<string>()
   const owners = new Map<number, number>()
   let sourceTurn = 1
   for (const event of events) {
@@ -133,7 +134,10 @@ export function convertDshToCodex(
     if (event.type === 'tool/call') loggedCalls.set(`${owners.get(event.seq)}/${String(data.callId)}`, event)
     if (event.type === 'tool/result') {
       const message = (data.message ?? {}) as JsonObject
-      settledCalls.add(`${owners.get(event.seq)}/${String((message.source as JsonObject | undefined)?.callId ?? message.toolCallId ?? data.toolCallId)}`)
+      const callId = String((message.source as JsonObject | undefined)?.callId ?? message.toolCallId ?? data.toolCallId)
+      settledCalls.add(`${owners.get(event.seq)}/${callId}`)
+      if ((data.error as JsonObject | undefined)?.code === TOOL_OUTCOME_UNKNOWN) unresolvedOutcomes.add(callId)
+      else unresolvedOutcomes.delete(callId)
     }
     if (event.type === 'assistant/message') {
       const message = (data.message ?? {}) as JsonObject
@@ -211,14 +215,25 @@ export function convertDshToCodex(
   }
 
   const activeCalls = new Set<string>()
+  const activeUnknown = new Set<string>()
   const exportEvents = [...surface]
   for (const event of surface) {
     const data = (event.data ?? {}) as JsonObject
     const message = (data.message ?? {}) as JsonObject
+    if (event.type === 'user/message') {
+      for (const operation of pendingOutcomes(data.source)) activeUnknown.add(operation.callId)
+    }
     for (const block of Array.isArray(message.content) ? message.content as JsonObject[] : []) {
       if (event.type === 'assistant/message' && block.type === 'tool-call') activeCalls.add(`${owners.get(event.seq)}/${String(block.id)}`)
     }
-    if (event.type === 'tool/result') activeCalls.add(`${owners.get(event.seq)}/${String((message.source as JsonObject | undefined)?.callId ?? message.toolCallId ?? data.toolCallId)}`)
+    if (event.type === 'tool/result') {
+      const callId = String((message.source as JsonObject | undefined)?.callId ?? message.toolCallId ?? data.toolCallId)
+      activeCalls.add(`${owners.get(event.seq)}/${callId}`)
+      if ((data.error as JsonObject | undefined)?.code === TOOL_OUTCOME_UNKNOWN) activeUnknown.add(callId)
+    }
+  }
+  if ([...unresolvedOutcomes].some(callId => !activeUnknown.has(callId))) {
+    throw new Error('Refusing migration: an unknown tool outcome has no machine-readable carrier on the current DSH surface')
   }
   for (const [key, event] of loggedCalls) {
     if (!advertisedCalls.has(key) && !activeCalls.has(key) && !settledCalls.has(key)) exportEvents.push(event)

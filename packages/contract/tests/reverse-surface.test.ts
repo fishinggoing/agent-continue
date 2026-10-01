@@ -204,3 +204,15 @@ test('active assistant text and tool advertisements keep their content-block ord
   ['QUESTION', 'BEFORE CALL', 'function_call', 'AFTER CALL', 'function_call_output'])
   assert.equal(back.tallies['message.content-blocks']?.dropped ?? 0, 0)
 })
+
+test('archived unknown errors cannot substitute for a missing active machine carrier', () => {
+  const source = compactedSource('F:\\synthetic-workspace')
+  source.find(record => record.payload.type === 'function_call_output')!.payload.recovery = TOOL_OUTCOME_UNKNOWN
+  const there = convertCodexToDsh(source, { sessionId: 'missing-carrier', cwd: 'F:\\synthetic-workspace' })
+  const active = currentSurface(there.events).filter(event => event.type !== 'system/message')
+  there.events.push({ type: 'user/message', seq: there.events.length, time: there.header.createdAt,
+    data: { id: 'text-only-summary', role: 'user', content: [{ type: 'text', text: 'UNKNOWN TEXT IS NOT MACHINE STATE' }],
+      source: { kind: 'synthetic-summary' } },
+    surfaceOp: { op: 'replace', startSeq: active[0]!.seq, endSeq: active.at(-1)!.seq }, sourceEventSeqs: active.map(event => event.seq) })
+  assert.throws(() => convertDshToCodex(there.header, there.events, options), /machine-readable carrier.*current DSH surface/i)
+})
