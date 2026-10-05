@@ -1,380 +1,230 @@
 # Agent Continue
 
-**在 Codex 与 DeepSeek Harness 之间做本地原生会话迁移的命令行工具。**
+目标是一个 **能对话、调用模型、读取和修改工程、执行测试、保存并恢复任务的 AI 编程 CLI**。Go 负责命令行和 Agent 运行时，浏览器网页操作同一套任务服务。发布程序和服务器运行不依赖 Node.js。
 
-把一个 AI 编程工具里做到一半的会话，转换成另一个工具**能列出、能恢复、能继续跑**的原生会话——
-接续者拿到的是完整上下文，而不是一份需要重新阅读的交接文档。
+**方向确认于 2026-10-05：** 用户明确选择将本项目扩展为能执行编程任务的 AI CLI。现有 Codex / DeepSeek Harness（DSH）原生会话迁移作为接续子功能保留。网页后续围绕任务、对话、工具执行、审批和代码修改展开。
 
-```console
-$ agent-continue migrate --from codex --input rollout.jsonl \
-    --cwd "F:\project" --target-home "C:\dsh-home"
+详细实施任务、依赖、文件分工及验收标准见 [AI CLI 开发工作清单](AI-CLI-开发工作清单.md)。清单中的新命令、模块和接口均为待开发设计。
 
-{
-  "command": "migrate",
-  "status": "written",
-  "source": { "harness": "codex", "records": 27, "cwd": "F:\\project" },
-  "output": { "path": "...\\session.v4.jsonl.zstd", "records": 29, "bytes": 6037 },
-  "toolsExecuted": 0,
-  "modelRequests": 0,
-  "losses": ["response_item/message: 1 record(s) dropped — role=developer is Codex-injected harness context"]
-}
-```
+## 当前状态与目标的区别
 
----
-
-## 1. 要解决的问题
-
-用 AI 编程工具做长任务的人，都会撞到同一堵墙：**任务做到一半，执行者没了。**
-
-可能是套餐额度到点、服务不可用、模型被下架，也可能只是你想换一个更合适的工具或账号。
-此时手里剩下一份代码、一个跑了一半的会话，和一段只能靠人复述的进度。
-
-现有做法是写交接文档——把需求、已完成、剩余任务重新讲一遍。
-但这有三重损耗：**复述本身要花掉一次模型额度**；**复述必然丢细节**；
-而且**接续者拿到的是结论，不是过程**，遇到需要回溯当初为什么这么改的地方就断了。
-
-值得解决的依据来自实际使用：五小时额度到点时任务没做完，是最常见的接续场景。
-**尚未验证的判断**（用户规模、市场需要、效率提升幅度）此处按假设看待，不做宣称。
-
-**这个工具解决的是其中可自动化的一环**：把会话记录本身变成另一侧能直接加载的原生格式，
-让接续者从真实上下文开始工作。
-
----
-
-## 2. 核心能力
-
-| 能力 | 说明 |
+| 范围 | 当前状态 |
 |---|---|
-| **双向迁移** | Codex rollout → DSH 会话；DSH 会话 → Codex 线程。两个方向都以真实 harness 验收 |
-| **产物是原生的** | 不是中间格式。DSH 侧可被 ACP `session/list` / `session/resume` 打开；Codex 侧可被 `thread/list`、分页历史与 `resume` 打开 |
-| **零副作用** | 不发起模型请求，不执行历史工具，不猜测或复制注册表，不默认写用户主目录。报告里 `modelRequests` 与 `toolsExecuted` 恒为 `0` |
-| **只读检查** | `inspect` 在不写任何文件的前提下报告来源、未决工具与可迁移性，且不打印消息正文或工具参数 |
-| **显式损失报告** | 无法映射的内容逐项进入 `losses`，绝不静默近似 |
-| **工具生命周期保真** | 已完成、并行、交错、以及未完成（开放尾部）的工具历史；结果未知的调用以机器可读标记保留，既不当成功也不自动重试 |
-| **会话曲面语义** | 目标历史按来源的**当前有效曲面**派生，经过压缩替换的会话不会把被替换掉的旧正文重新带回来 |
-| **拒绝优先** | 已有目标一律拒绝覆盖；损坏的来源、缺尾部帧、不合格来源一律拒绝，不产出半成品 |
+| GitHub `main` | [README](https://github.com/fishinggoing/agent-continue/blob/50a8da9f28a41809554501868483efac144ccfb8/README.md) 定义的是原生会话迁移 CLI；2026-10-05 核对远端 HEAD 为 `50a8da9` |
+| 本地 Go 工作区 | 已有 `inspect`、`migrate`、`install`、`serve`，迁移与安装功能已有验证；Go 新文件目前尚未提交 |
+| 现有网页 | 上传、检查、转换、下载的迁移页面；需改造成 AI 任务操作入口 |
+| AI 编程运行时 | 尚未实现模型客户端、Agent 循环、文件编辑工具、命令执行、运行权限和自身任务恢复 |
+| 实际服务器发布 | 尚未完成，服务器地址、域名、模型提供方及部署工作区待实施方配置 |
 
-### 三处真正难的地方
+**迁移测试通过只证明接续子系统；不代表 AI 编程 CLI 已可用。** 当前 `dist/` 内的二进制和压缩包仍是迁移版本，不能作为新 AI CLI 交付。
 
-**一、工具调用不是一条记录，是一个生命周期。**
-另一侧要求工具调用先由助手消息"声明"，再出现调用事件，且 id、名称、参数必须逐字节一致；
-未完成的调用还会锁死 step 与 turn 的闭合。这些约束没有写在任何一份可读文档里，
-是从目标 harness 的校验器与真实二进制反推出来的，并写进了本仓库的约定：
-调用先声明、并行调用合并为一次声明、未完成调用留合法开放尾部。
+## 目标使用流程（待实现）
 
-**二、压缩后的会话，历史不等于事件流。**
-目标 harness 的模型可见历史由**当前有效曲面**决定——替换会把被遮蔽的节点从派生中删除。
-按事件顺序导出，在压缩过的会话上会把模型早已看不到的正文重新搬回去。
-本工具按曲面顺序派生，并对无法解释的投影类型**拒绝迁移**而不是近似处理。
+1. 配置模型提供方、凭据引用、工作区和工具权限。
+2. 在工程目录启动交互会话，或通过 `run` 提交一项编程任务。
+3. Agent 调用模型，按权限读取和修改文件、执行测试，持续显示进度及修改结果。
+4. 中断后通过会话 ID 恢复；结果未知的工具先核实，不自动重跑。
+5. 浏览器操作同一套运行时，查看对话、工具结果、待审批操作和代码差异。
+6. 需要跨工具接续时使用保留的原生迁移能力。
 
-**三、"不知道"必须与"是 0 / 是成功"区分开。**
-工具结果未知、错误标志缺失、用量计数不完整——这些都必须作为显式状态保留或明确拒绝。
-把未知写成成功、把缺失写成 0，是本项目里反复出现并逐一修掉的一类缺陷（见 `docs/DEFECTS.md`）。
+上述 `chat`、`run`、`resume` 等 Agent 命令尚不存在。开发顺序是先完成可用 CLI，再接网页和服务器部署，详见工作清单。
 
----
+编程工具操作的是 CLI 所在机器的工程，或已配置的服务器工作区。网页不能直接访问访问者电脑上的任意路径；本机到服务器的工程同步不在首版默认流程中。
 
-## 3. 快速开始
+## 现有迁移页面（过渡功能）
 
-```console
-git clone https://github.com/fishinggoing/agent-continue.git
-cd agent-continue
-node packages/cli/src/main.ts help
+已有可执行文件时，在 Windows PowerShell 中运行：
+
+```powershell
+.\dist\agent-continue.exe serve --listen 127.0.0.1:8080
 ```
 
-要求 **Node.js >= 24.12**（依赖原生 TypeScript 支持，仓库无构建步骤、无运行时依赖）。
+打开 <http://127.0.0.1:8080/>。当前显示的仍是迁移页面；“试用合成示例”只演示接续子功能。
 
-**先看看会发生什么，不落盘：**
+1. 上传 Codex 的 `rollout-*.jsonl`，或 DSH 的 `session.v3/v4.jsonl.zstd`。
+2. 检查来源记录和未决工具，填写目标机器上的工程绝对路径。
+3. 预览损失报告，转换并下载原生会话和 JSON 报告。
+4. 在目标机器使用 `install` 导入，再由目标工具列出和恢复会话。
 
-```console
-agent-continue migrate --from codex --input rollout.jsonl \
-  --cwd "F:\project" --target-home "C:\dsh-home" --dry-run
+网页的目标目录支持 Windows 与 Linux；服务器无需拥有该目录。上传文件仅在请求内存中处理，不保存到服务器会话库。Web 限制为上传 16 MiB、解压后 32 MiB、最多 100,000 条记录、JSON 深度 256 和整个会话 1,000,000 个 JSON token；更大文件使用本地 CLI。
+
+外部访问需要至少 24 字符的 `AGENT_CONTINUE_TOKEN`，网页“访问设置”填入相同令牌。令牌只保留在当前页面内存。对外部署使用 HTTPS 反向代理。
+
+## 构建
+
+开发需要 Go 1.26 或更新版本。浏览器文件直接嵌入 Go 可执行文件，无 npm 安装或前端构建步骤。
+
+```sh
+go mod download
+go test ./...
+go vet ./...
+go build -trimpath -o dist/agent-continue ./cmd/agent-continue
 ```
 
-**正式迁移：**
+Windows 输出可用 `dist/agent-continue.exe`。PowerShell 辅助脚本将缓存和临时目录放在忽略的 `.agent-continue/` 下，优先使用已安装的 Go，也支持本地便携工具链：
 
-```console
-agent-continue migrate --from codex --input rollout.jsonl \
-  --cwd "F:\project" --target-home "C:\dsh-home"
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/go.ps1 test ./...
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/go.ps1 build -trimpath -o dist/agent-continue.exe ./cmd/agent-continue
 ```
 
----
+交叉构建 Linux x86-64：
 
-## 4. 使用
-
-### `help`
-
-```console
-agent-continue help
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o dist/agent-continue-linux-amd64 ./cmd/agent-continue
 ```
 
-### `inspect`
+Linux 构建使用纯 Go SQLite 与 Zstandard，不依赖 Node、外部 SQLite CLI、Zstandard CLI 或 C 编译器。
 
-读取一侧会话，报告其状态、未决工具与可迁移性，**不写任何文件、不输出正文**。
+## 已实现的接续 CLI 命令
 
-```console
-agent-continue inspect --from codex|dsh --input <FILE>
+以下示例使用 Linux 可执行文件名；Windows 将 `./agent-continue` 替换为 `.\dist\agent-continue.exe`，路径替换为本机绝对路径。
+
+### 检查
+
+```sh
+./agent-continue inspect --from codex --input rollout.jsonl
+./agent-continue inspect --from dsh --input session.v4.jsonl.zstd
 ```
 
-### `migrate`
+只读检查，不输出消息正文或工具参数。CLI 来源文件上限 128 MiB，DSH 解压后上限 256 MiB。
 
-```console
-agent-continue migrate --from codex|dsh --input <FILE> \
-  --cwd <ABSOLUTE_DIR> --target-home <ABSOLUTE_DIR> [--dry-run] [--id <UUID>]
+### Codex → DSH
+
+```sh
+./agent-continue migrate --from codex --input rollout.jsonl \
+  --cwd /home/me/project --target-home /home/me/dsh-home --dry-run
 ```
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `--from` | 是 | `codex` 或 `dsh` |
-| `--input` | 是 | 来源文件：Codex 为 `rollout-*.jsonl`，DSH 为 `session.vN.jsonl.zstd` |
-| `--cwd` | 是 | 目标会话的工作目录，必须为绝对路径 |
-| `--target-home` | 是 | 目标 harness 的 home 目录 |
-| `--dry-run` | 否 | 只规划不落盘，`status` 返回 `planned` |
-| `--id` | 否 | 目标会话 UUID；省略时自动生成 |
-| `--cli-version` | DSH→Codex | 写入 Codex `session_meta` 的 CLI 版本 |
-| `--model-provider` | DSH→Codex | 写入 Codex `session_meta` 的模型来源 |
-| `--model` / `--title` | 否 | Codex 线程注册的可选字段 |
+检查报告后移除 `--dry-run` 写入目标。DSH 会话按目标目录和会话 ID 写入原生存储路径。
 
-### 输出
+### DSH → Codex
 
-除 `help` 外，命令在 stdout 输出 JSON：
-
-```json
-{
-  "command": "migrate",
-  "status": "written",
-  "source": { "harness": "codex", "path": "...", "records": 27, "cwd": "F:\\project" },
-  "pendingOperations": [],
-  "toolsExecuted": 0,
-  "modelRequests": 0,
-  "output": { "path": "...", "records": 29, "bytes": 6037 },
-  "tallies": { "response_item/message": { "mapped": 9, "dropped": 1 } },
-  "losses": ["response_item/message: 1 record(s) dropped — ..."]
-}
+```sh
+./agent-continue migrate --from dsh --input session.v4.jsonl.zstd \
+  --cwd /home/me/project --target-home /home/me/codex-home \
+  --cli-version 0.160.0 --model-provider openai \
+  --model my-model --title '迁入的会话' --dry-run
 ```
+
+`--cli-version`、`--model-provider` 在此方向必填，按目标工具实际版本和配置填写；`--model`、`--title` 选填。目标 Codex home 必须事先由 Codex 初始化 `state_5.sqlite`；注册表结构不匹配会拒绝写入，不复制或猜测结构。写入会同时生成 rollout 并注册线程。
+
+### 导入网页下载的原生产物
+
+`install --from` 填下载产物所属工具。例如 Codex → DSH 网页转换后填 `dsh`：
+
+```sh
+./agent-continue install --from dsh --input session.v4.jsonl.zstd \
+  --cwd /home/me/project --target-home /home/me/dsh-home --dry-run
+```
+
+导入 Codex 产物时保留网页显示的模型与标题参数：
+
+```sh
+./agent-continue install --from codex --input rollout-downloaded.jsonl \
+  --cwd /home/me/project --target-home /home/me/codex-home \
+  --model my-model --title '迁入的会话' --dry-run
+```
+
+`--cwd` 必须与产物中的目标目录相符，导入不会重新跨工具转换。确认后移除 `--dry-run`。本地工程目录必须存在；相同 ID 或路径拒绝覆盖。
+
+### 参数与报告
+
+`migrate` 还支持 `--id <UUID>` 指定目标 ID，省略时随机生成。`help` 显示用法。除 `help`、长期运行的 `serve` 外，stdout 输出 JSON；错误输出 stderr JSON，退出码为 1。
 
 | 字段 | 含义 |
 |---|---|
-| `status` | `planned`（dry-run）或 `written` |
-| `pendingOperations` | 来源中未决的工具调用，逐项列出 |
-| `toolsExecuted` / `modelRequests` | 恒为 `0` |
-| `tallies` | 每类来源记录的映射 / 丢弃计数 |
-| `losses` | 逐条说明丢了什么、为什么 |
+| `status` | CLI 为 `planned` / `written`，网页转换为 `converted` |
+| `pendingOperations` | 结果未知的工具调用，恢复前核实实际执行状态 |
+| `tallies` / `losses` | 各类记录的映射、丢弃数量与原因 |
+| `toolsExecuted` / `modelRequests` | 转换与安装过程为 0 |
+| `nativeValidation` | `not-run`，转换成功不会冒充目标工具恢复验收 |
+| `target` / `output` | 目标 ID、目录、注册选项和实际产物位置 |
 
-出错时向 stderr 输出 `{"status":"failed","error":"..."}`，退出码 `1`。
+子代理或带 `parentSession` 的 DSH 来源、损坏来源、不完整压缩尾帧、无法解释的当前曲面、非法目录、重复 ID 或文件均会拒绝。压缩后的会话按当前有效曲面迁移，不带回已被替换的旧正文。已完成、并行、交错和未完成工具调用沿用原有映射契约，未知结果不写成成功。
 
-### 会被拒绝的输入
+## 现有迁移服务的部署模板
 
-宁可拒绝，不产出半成品：
+以下配置用于当前迁移版本。新 AI CLI 需要增加明确可写的工程目录、独立持久会话目录、模型配置和工具执行隔离，完成工作清单中的部署验收后才能上线。当前 Compose 的只读文件系统没有工程及状态卷，systemd 也没有配置任务所需的可写目录。
 
-- 来源结构损坏、出现不完整尾部帧、头部或事件无法解析
-- 来源是子代理会话或带 `parentSession` 的派生会话（目标侧本就无法列出 / 恢复）
-- `--cwd` 不是绝对路径
-- 目标 home 中没有已初始化的注册表
-- 目标会话 UUID、DSH 产物或 Codex rollout **已存在**
-- 来源会话的当前曲面上存在本工具无法解释的投影事件
+提供 Docker Compose 和 Linux 可执行文件两种方式。实际发布需要目标服务器、域名及访问方式；本地构建和测试不代表已发布到远端。
 
----
+本次构建另提供 `dist/agent-continue-linux-amd64.tar.gz`，包含 Linux 可执行文件、Go 源码、内嵌网页和部署配置，可直接传到服务器解压。运行程序不需要编译工具；选择在服务器构建镜像时使用包内的 Dockerfile。
 
-## 5. 架构
+### Docker Compose
 
-```text
-                    ┌──────────────── CLI ────────────────┐
-                    │  参数解析 · 编排 · 报告 · 拒绝策略    │
-                    └──────────────┬──────────────────────┘
-                                   │
-                    ┌──────────────▼──────────────────────┐
-                    │  contract · 字段级映射契约与损失报告  │
-                    └───────┬──────────────────────┬──────┘
-                            │                      │
-              ┌─────────────▼────────┐  ┌──────────▼─────────────┐
-              │   codex-adapter      │  │     dsh-adapter        │
-              │  rollout / 注册表     │  │  压缩帧 / 曲面 / v4 校验 │
-              └─────────────┬────────┘  └──────────┬─────────────┘
-                            │                      │
-                    Codex 会话存储            DSH 会话存储
+服务器安装 Docker Compose，将仓库放入独立应用目录，创建不纳入 Git 的 `.env`：
+
+```dotenv
+AGENT_CONTINUE_TOKEN=替换为至少24字符的随机私密令牌
+TZ=Asia/Shanghai
 ```
 
-三层职责明确分离，因此**改一侧不会波及另一侧**：
+限制配置文件权限后启动：
 
-| 层 | 责任 | 变更影响范围 |
-|---|---|---|
-| **命令层** `packages/cli` | 参数校验、来源探测、编排写入、生成报告 | 只影响交互契约 |
-| **契约层** `packages/contract` | 两侧字段映射、跨 harness 字段约定、损失归集 | 两侧格式同时变化时才动 |
-| **适配层** `codex-adapter` / `dsh-adapter` | 各自的容器格式、索引、曲面折叠 | 各自 harness 单独演进即可 |
-
-**核心流程**（以 Codex → DSH 为例）：
-
-1. **命令层**解析参数，判定来源类型，先做**来源资格检查**（子会话、非绝对路径等一律拒绝）；
-2. **适配层**解出来源的记录序列，并折叠出 DSH 侧的**当前有效曲面**；
-3. **契约层**把记录逐条映射为 DSH 事件，同时累计映射计数与损失；
-4. **命令层**调用写入器落盘；写入器默认**拒绝覆盖**，并返回字节数、帧数与损失清单。
-
-没有服务端与数据库：这是一个**本地 CLI**，持久化目标是两个 harness 各自的会话存储。
-`.agent-continue/` 存放隔离运行环境与验收产物。
-
----
-
-## 6. 关键设计与取舍
-
-**做了什么**
-
-- **产物直接用目标侧原生格式**，不引入中间层。代价是要精确复刻两侧格式，收益是产物可以被目标 harness 直接列出、恢复、续跑。
-- **拒绝优先于近似**。无法解释的投影、损坏的来源、资格不符的会话，一律报错退出。代价是覆盖面受已知事件类型限制，收益是**不会交付一个看起来成功、实际丢内容的产物**。
-- **损失必须显式**。每条丢弃都带原因进入 `losses`，并有完整的字段级清单（见 `packages/contract/README.md`）。
-- **写入默认不覆盖**。避免"重跑一次把好产物覆盖成坏产物"。
-- **未知状态单独建模**。工具结果未知、错误标志缺失、计数不完整都保留为显式状态，不塌缩成成功或 0。
-
-**没做什么，以及为什么**
-
-- **不搬运工程文件。** 会话迁移与文件搬运是两件事；换目录时由使用者自行搬运完整工程再显式指定 `--cwd`，比工具猜测目录意图更安全。
-- **不迁移登录、权限与工具副作用。** 这些无法从会话记录重建，伪造它们比缺失更危险。
-- **不自动执行历史工具。** 重放一个有副作用的工具，后果由使用者承担，工具无权代劳。
-- **不做托管演示与 Web 界面。** 当前形态就是本地 CLI；一个需要凭据与本地会话库的工具，托管化并不会让它更有用。
-- **不承诺无损。** 厂商不透明推理、插件自有投影、账号级状态都不迁移，并在文档里逐项写明。
-
-**一处刻意的收紧**：目标侧对"工具结果替换"只要求范围合法，本工具额外要求**身份字段不得改变**
-（调用 id、来源类型必须一致，只能改内容）。这比目标校验器更严，但符合该 harness 自身压缩时的实际做法——
-宁可拒绝一次可疑的替换，也不接受一个身份被改写的产物。
-
----
-
-## 7. 正确性怎么保证
-
-**测试矩阵：162 项，0 失败。**
-
-| 套件 | 数量 | 覆盖 |
-|---|---|---|
-| `dsh-adapter` | 14 | 压缩帧读写、路径推导、v4 校验、曲面折叠 |
-| `codex-adapter` | 12 | rollout 解析、注册表写入、扩展长度路径 |
-| `contract` | 72 | 逐字段映射、损失报告、往返回归、真实迁移 |
-| `cli` | 64 | 参数校验、拒绝策略、编排、原生验收 |
-
-**验证手段，按强度递增：**
-
-1. **单元与夹具测试** — 覆盖映射规则与拒绝路径；
-2. **往返回归** — 把内容转过去再转回来，断言正文、角色、顺序与工具配对不丢；
-3. **真实 harness 验收** — 用真实 DSH（ACP `session/list` + `session/resume`）与真实 Codex
-   （`thread/list` + 分页历史 + `resume`，含**进程重启后**恢复）实际加载产物；
-4. **内容断言** — 解压产物后逐事件核对正文与工具关系，**不用"文件变大了"当作读进历史的证据**；
-5. **干净副本复跑** — 从远端 clone 到不同目录，四套全绿，证明仓库自洽且路径无关。
-
-**测试数字要说清口径**：跳过数取决于开关。只配原生 CLI 时是 `162 / 159 / 0 / 3`；
-再配上旧 harness 开关是 `162 / 162 / 0 / 0`；把语料根指向空目录是 `162 / 153 / 0 / 9`。
-三种配置失败数都是 0，**报告"全绿"时必须一并报告跳过数**。
-
-**开发过程本身也留了账**：`docs/DEFECTS.md` 记录 16 项缺陷（D1–D16），全部结案，
-其中包含由我自己提出、随后被证伪并标注纠正的记录。**保留被推翻的结论，是为了让判据可信。**
-
----
-
-## 8. 完成情况
-
-| 功能 | 状态 | 如何验证 |
-|---|---|---|
-| 只读检查两侧会话与未决工具 | **已验证** | 单元测试；断言不输出正文与工具参数 |
-| Codex → DSH 原生迁移 | **已验证** | 真实 DSH ACP `list` + `resume` 成功加载 |
-| DSH → Codex 原生迁移 | **已验证** | 线程注册、分页历史非空、`resume` 后继续模型投递 |
-| 已完成 / 并行 / 交错 / 未完成工具历史 | **已验证** | 原生夹具 + 开放尾部 + 后续轮次回归 |
-| 结果未知的工具调用跨迁移保留 | **已验证** | 机器可读标记 + 往返回归；不视为成功、不自动重试 |
-| 压缩后的会话按当前曲面迁移 | **已验证** | 多次替换、系统首节点、模型实际输入断言 |
-| dry-run 与损失清单 | **已验证** | 无写入、拒绝非法来源、不覆盖已有 ID 与文件 |
-| 不同目录的干净 clone 可运行 | **已验证** | 远端 clone 到独立目录，四套全绿 |
-| 在**第二台机器**上重新部署 | **已实现未验证** | 步骤见第 9 节，尚未在第二台机器执行 |
-| 在线托管版本 | **未实现** | 当前是本地 CLI，不提供服务端与在线界面 |
-| Web 前端 / HTTP 服务 | **未实现** | 会话存储在本机，托管化不增加有效性 |
-| 自动发现并一键切换当前任务 | **未实现** | 目前需显式指定来源、目标 home 与恢复入口 |
-
----
-
-## 9. 重新部署
-
-**依赖**：Node.js >= 24.12。无第三方运行时依赖、无构建步骤、无数据库。
-两个 harness 的 CLI 仅在跑**原生验收测试**时需要，日常迁移不需要。
-
-**配置项**：全部通过命令行参数传入，仓库内不含任何密钥。原生验收测试读取以下环境变量（示例值）：
-
-```console
-$env:AGENT_CONTINUE_DSH_CLI     = "<DSH 启动器路径>"
-$env:AGENT_CONTINUE_CODEX_CLI   = "<codex.exe 路径>"    # 路径含内容哈希，重装后会变
-$env:AGENT_CONTINUE_NATIVE_ROOT = "<已存在的隔离目录>"   # 缺失时会报 mkdtemp ENOENT
+```sh
+chmod 600 .env
+docker compose up -d --build
+curl --fail http://127.0.0.1:8080/healthz
 ```
 
-不配置时，需要真实 harness 的用例会自动跳过并在输出里标明——**跳过的用例不会被计为通过**。
+`compose.yaml` 将端口绑定到服务器 `127.0.0.1:8080`，使用非 root 用户、只读文件系统，限制 2 GiB 内存和两个 CPU。最多并行处理两个检查或转换请求，繁忙时返回 429。构建上下文只包含 Go 模块、源码与嵌入网页，不打包用户会话、凭据或第三方研究目录。
 
-**数据准备**：无需预置数据。测试使用隔离 home 与合成语料，不读取真实用户会话。
+把 `deploy/Caddyfile` 的示例域名换成实际域名，用服务器上的 Caddy 代理至 `127.0.0.1:8080`。域名 DNS 指向服务器且 HTTPS 端口可访问后，按 Caddy 的配置流程启用该文件。
 
-**启动步骤**：
+### Linux 可执行文件与 systemd
 
-```console
-git clone <repo> && cd agent-continue
-node packages/cli/src/main.ts help
-node --test "packages/dsh-adapter/tests/**/*.test.ts"
-node --test "packages/codex-adapter/tests/**/*.test.ts"
-node --test "packages/contract/tests/**/*.test.ts"
-node --test "packages/cli/tests/*.test.ts"
+先创建服务用户 `agent-continue` 和 `/opt/agent-continue` 目录。在 `/etc/agent-continue.env` 配置令牌和时区，权限设为 600，再使用 `deploy/agent-continue.service`：
+
+```sh
+sudo install -m 755 dist/agent-continue-linux-amd64 /opt/agent-continue/agent-continue
+sudo install -m 644 deploy/agent-continue.service /etc/systemd/system/agent-continue.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now agent-continue
+curl --fail http://127.0.0.1:8080/healthz
 ```
 
----
+服务只监听回环地址，由 HTTPS 代理对外提供网页。服务器无需访问用户的 Codex 或 DSH home，本地 `install` 负责会话库写入。
 
-## 10. 来源与贡献
+## 代码结构与语言选择
 
-**起点**：本仓库的 `packages/` 与 `docs/` 为本次全新编写；
-仓库内另有一份早期设计草案 `项目接续工具-框架设计.md`（2026-09-16），
-它界定了"本地优先的工作接续应用"这一方向，本次实现的是其中**会话适配**这一环。
-更早的 Python 骨架未纳入版本控制，也不在本交付内。
+| 路径 | 职责 |
+|---|---|
+| `cmd/agent-continue/` | Go 命令入口、JSON 输出与 HTTP 启动 |
+| `internal/migrate/` | 格式、压缩帧、曲面、工具生命周期、字段映射和损失 |
+| `internal/app/` | CLI / HTTP 共用流程、安装与 Codex 注册 |
+| `internal/server/` | HTTP、访问令牌、上传资源限制 |
+| `internal/server/web/` | 内嵌 HTML、CSS 和浏览器 JavaScript |
+| `deploy/` | HTTPS 代理和 Linux 服务配置 |
+| `packages/` | 原 TypeScript 实现及验收用例，保留作开发期比较基准 |
+| `scripts/` | Go 辅助脚本、比较语料导出、旧验收到 Go 的桥接 |
 
-**本次新增**：两侧格式适配层、映射契约与损失归集、命令行编排、缺陷登记与验收记录。
+目标采用 **Go CLI / Agent 后端 + 浏览器 Web 前端**。浏览器 JavaScript 由浏览器执行，不需要 Node 服务。首版不要求 C++ 或 Rust；如以后增加 Rust 隔离执行组件，应先明确进程接口和验收指标，具体边界见工作清单。当前仓库没有 Rust 工程或 Rust 配置。
 
-**未使用**任何第三方模板或开源代码；仓库不含第三方源码副本。
+第三方运行依赖为 `klauspost/compress` 和 `modernc.org/sqlite`，版本与校验固定在 `go.mod` / `go.sum`；图标资源的授权文件随源码保留。
 
----
+## 现有迁移功能的验证
 
-## 11. AI 的使用
+Go 测试覆盖两向转换、28 份旧实现对照语料、压缩帧、拒绝覆盖、SQLite 注册、安装、HTTP 鉴权、上传资源边界及模型/标题传递。比较语料使用合成内容，随机 UUID 按关系和语义比较。
 
-本项目的开发过程本身就是"人与 AI、AI 与 AI 协作"，三个对实现影响较大的 AI 建议如下，
-**都经过核对源码或实测后才决定采纳与否**：
+2026-10-05 前一轮实测：Windows 与 WSL Ubuntu 的 Go 测试均通过，`go vet` 无诊断；Linux 可执行文件的 `/healthz` 和 HTTP 转换规划接口通过。浏览器实际验证了两向上传、检查、预览、下载和导入命令。Docker Compose 配置校验通过，本机 Docker 引擎不可用，镜像构建与容器启动尚未实测。远端 HTTPS 发布与 systemd 启动待服务器环境验证。本轮只修正文档，未重新执行这些测试。
 
-**一、采纳：用空内容的系统首节点保住"受保护头"。**
-AI 建议在迁移时写入一个内容为空的系统首节点。这条最初只是提案，核对目标 harness 源码后确认：
-它的系统提示投影在"没有首节点"时会走**追加**路径并被校验器拒绝，而"有首节点（哪怕为空）"时会走**替换**路径——
-正是校验器允许的那条。进一步在真实会话里找到同形证据：真实会话确实从空首节点起步、之后单节点替换。
-**采纳，并要求 `content` 严格为空、`source.kind` 使用规定值，不得重放外来系统指令。**
-
-**二、修改：拒绝范围比原判据更宽，最后证明是判据写窄了。**
-AI 对某个图片卸载事件采取"只要出现就拒绝"。我最初判断这过宽，核对源码后发现相反：
-该事件自身不是曲面节点，却会**改写其他节点的投影内容**，忽略它等于导出模型已看不到的内容。
-**结论：AI 的实现正确，我修改了自己的判据。** 这次修正记在 `docs/HANDOFF.md` 第 27 节。
-
-**三、否决并重做：一个"看起来修好了"的方案被测试打回。**
-我给出的第一版修复在遇到未完成工具调用时直接停止导入。AI 补的用例要求保留中断之后的轮次，
-推翻了该方案。重新读源码后确认：未完成调用会同时封死闭合与推进两条路，
-正确做法是**按后续内容分情况**——后面还有轮次就先补齐一条未知结果再继续，否则才留开放尾部。
-**该修复经真实 harness 验收通过**，过程记在 `docs/HANDOFF.md` 第 14、17 节。
-
----
-
-## 12. 已知限制
-
-- 迁移的是**可映射的会话上下文**，不是厂商运行时或模型内部状态；不透明推理不承诺跨账号、跨模型可用。
-- 不搬运工程文件。换目录需自行搬运完整工程（含未提交修改）再显式指定 `--cwd`。
-- 不迁移登录、权限，也不重现历史工具的实际副作用。
-- 无法解释的投影类型会被**拒绝**而非近似，因此覆盖面限于已知的会话事件类型；
-  插件自有的曲面类型一律拒绝。
-- 真实语料覆盖面有限：验证集中在当前机器上可获取的会话样本。
-- 未在第二台机器上验证过完整部署。
-
----
-
-## 13. 目录结构
-
-```text
-packages/
-  codex-adapter/   Codex rollout、注册表、扩展长度路径
-  dsh-adapter/     压缩帧、路径推导、v4 校验、会话曲面折叠
-  contract/        两侧字段映射契约与损失报告
-  cli/             命令行入口、拒绝策略、集成与原生验收
-docs/
-  FINAL-HANDOFF.md 交付范围与验证边界
-  HANDOFF.md       开发过程记录（含 DSH 原生行为认定，逐条附源码行号）
-  DEFECTS.md       缺陷登记（D1–D16，全部结案）
+```sh
+go test ./...
+go vet ./...
 ```
+
+开发期还可让原有 CLI 验收调用 Go 可执行文件。该测试工具需要 Node.js 24.12 或更新版本，应用运行与部署不需要 Node。以下 PowerShell 配置使用隔离 home 和合成会话，原生 CLI 路径按实际安装位置填写：
+
+```powershell
+$env:AGENT_CONTINUE_GO_CLI = (Resolve-Path dist/agent-continue.exe).Path
+$env:AGENT_CONTINUE_CODEX_CLI = '<codex.exe 的实际绝对路径>'
+$env:AGENT_CONTINUE_DSH_CLI = '<dsh 启动器的实际绝对路径>'
+New-Item -ItemType Directory -Path .agent-continue/native-tests -Force | Out-Null
+$env:AGENT_CONTINUE_NATIVE_ROOT = (Resolve-Path .agent-continue/native-tests).Path
+node --import ./scripts/go-cli-hook.mjs --test 'packages/cli/tests/*.test.ts'
+```
+
+2026-10-05 本机实测：上述 CLI 套件 **66 通过、0 失败、0 跳过**，含原有 64 项及新增 2 项 Go 原生安装验收，Codex 0.160.0 和 DSH 0.2.0-rc.2 参与验证。桥接替换测试中的 `execute` 调用；旧 TypeScript 入口测试及测试辅助程序仍保留，不能将 66 项全部称为 Go 二进制入口测试。新增安装验收确认 DSH 目录尾斜杠及 `.`/`..` 规范化后可原生列出和恢复，Codex 下载导入后模型、标题及分页历史可用。未配置原生 CLI 时相应用例会跳过，跳过不计为通过。模型续跑验收使用固定响应的本地测试服务，未请求付费模型。
+
+原有 DSH 原生行为依据和历史记录保留在 `docs/HANDOFF.md`、`docs/DEFECTS.md`。新实现沿用这些判据，不将转换成功当作原生恢复成功，不自行放宽会话资格或当前曲面规则。

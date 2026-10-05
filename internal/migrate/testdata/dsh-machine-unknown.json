@@ -1,0 +1,340 @@
+{
+  "name": "dsh-machine-unknown",
+  "direction": "dsh-to-codex",
+  "input": {
+    "header": {
+      "type": "session",
+      "version": 4,
+      "id": "synthetic-dsh",
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "isSeeded": false,
+      "delegationDepth": 0
+    },
+    "events": [
+      {
+        "type": "turn/start",
+        "seq": 0,
+        "time": 1790820000000,
+        "data": {
+          "turn": 1
+        }
+      },
+      {
+        "type": "step/start",
+        "seq": 1,
+        "time": 1790820000001,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      },
+      {
+        "type": "user/message",
+        "seq": 2,
+        "time": 1790820000002,
+        "data": {
+          "id": "unknown-notice",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "已记录未知工具结果"
+            }
+          ],
+          "source": {
+            "kind": "agent-continue-unknown-outcomes",
+            "recovery": "TOOL_OUTCOME_UNKNOWN",
+            "pendingOperations": [
+              {
+                "callId": "call-unknown",
+                "name": "write_file",
+                "state": "unknown"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "assistant/message",
+        "seq": 3,
+        "time": 1790820000003,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "stream": [],
+          "message": {
+            "id": "unknown-advertisement",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "provider": "synthetic-provider",
+              "model": "synthetic-model"
+            },
+            "content": [
+              {
+                "type": "tool-call",
+                "id": "call-unknown",
+                "name": "write_file",
+                "arguments": "{\"path\":\"结果.txt\",\"text\":\"保留\"}"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "tool/call",
+        "seq": 4,
+        "time": 1790820000004,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "callId": "call-unknown",
+          "name": "write_file",
+          "arguments": "{\"path\":\"结果.txt\",\"text\":\"保留\"}"
+        }
+      },
+      {
+        "type": "tool/result",
+        "seq": 5,
+        "time": 1790820000005,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "message": {
+            "id": "unknown-result",
+            "role": "tool",
+            "toolCallId": "call-unknown",
+            "source": {
+              "kind": "tool",
+              "callId": "call-unknown"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "结果未知"
+              }
+            ],
+            "isError": true
+          },
+          "error": {
+            "name": "ToolOutcomeUnknownError",
+            "code": "TOOL_OUTCOME_UNKNOWN"
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "step/end",
+        "seq": 6,
+        "time": 1790820000006,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      },
+      {
+        "type": "turn/end",
+        "seq": 7,
+        "time": 1790820000007,
+        "data": {
+          "turn": 1,
+          "reason": {
+            "kind": "completed"
+          }
+        }
+      }
+    ],
+    "options": {
+      "cliVersion": "synthetic-cli",
+      "threadId": "codex-unknown",
+      "modelProvider": "synthetic-provider",
+      "startedAt": "2026-10-01T02:00:00.000Z"
+    }
+  },
+  "expected": {
+    "drafts": [
+      {
+        "payload": {
+          "cli_version": "synthetic-cli",
+          "cwd": "F:\\synthetic-workspace",
+          "history_mode": "paginated",
+          "id": "codex-unknown",
+          "model_provider": "synthetic-provider",
+          "originator": "codex_exec",
+          "runtime_workspace_roots": [
+            "F:\\synthetic-workspace"
+          ],
+          "session_id": "codex-unknown",
+          "source": "exec",
+          "thread_source": "user",
+          "timestamp": "2026-10-01T02:00:00.000Z"
+        },
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "session_meta"
+      },
+      {
+        "payload": {
+          "model_context_window": 272000,
+          "started_at": 1790820000,
+          "turn_id": "<uuid-1>",
+          "type": "task_started"
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "approval_policy": "never",
+          "cwd": "F:\\synthetic-workspace",
+          "model": "synthetic-model",
+          "root_turn_id": "<uuid-1>",
+          "sandbox_policy": {
+            "type": "disabled"
+          },
+          "turn_id": "<uuid-1>",
+          "workspace_roots": [
+            "F:\\synthetic-workspace"
+          ]
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "turn_context"
+      },
+      {
+        "payload": {
+          "content": [
+            {
+              "text": "已记录未知工具结果",
+              "type": "input_text"
+            }
+          ],
+          "id": "msg_unknown-notice",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "pending_operations": [
+            {
+              "callId": "call-unknown",
+              "name": "write_file",
+              "state": "unknown"
+            }
+          ],
+          "recovery": "TOOL_OUTCOME_UNKNOWN",
+          "role": "user",
+          "type": "message"
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at_ms": 1790820000002,
+          "item": {
+            "client_id": null,
+            "content": [
+              {
+                "text": "已记录未知工具结果",
+                "text_elements": [],
+                "type": "text"
+              }
+            ],
+            "id": "item_unknown-notice",
+            "type": "UserMessage"
+          },
+          "started_at_ms": 1790820000002,
+          "thread_id": "codex-unknown",
+          "turn_id": "<uuid-1>",
+          "type": "item_completed"
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "arguments": "{\"path\":\"结果.txt\",\"text\":\"保留\"}",
+          "call_id": "call-unknown",
+          "id": "fc_call-unknown",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "name": "write_file",
+          "type": "function_call"
+        },
+        "timestamp": "2026-10-01T02:00:00.003Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "call_id": "call-unknown",
+          "id": "fco_call-unknown",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "isError": true,
+          "output": "结果未知",
+          "recovery": "TOOL_OUTCOME_UNKNOWN",
+          "type": "function_call_output"
+        },
+        "timestamp": "2026-10-01T02:00:00.005Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at": 1790820000,
+          "duration_ms": 5,
+          "started_at": 1790820000,
+          "turn_id": "<uuid-1>",
+          "type": "task_complete"
+        },
+        "timestamp": "2026-10-01T02:00:00.007Z",
+        "type": "event_msg"
+      }
+    ],
+    "losses": [
+      "step/end: 1 dropped — Codex models turns but not steps",
+      "step/start: 1 dropped — Codex models turns but not steps"
+    ],
+    "tallies": {
+      "assistant/message": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "step/end": {
+        "dropped": 1,
+        "mapped": 0,
+        "reason": "Codex models turns but not steps"
+      },
+      "step/start": {
+        "dropped": 1,
+        "mapped": 0,
+        "reason": "Codex models turns but not steps"
+      },
+      "tool/call": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "tool/result": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "turn/end": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "turn/start": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "user/message": {
+        "dropped": 0,
+        "mapped": 1
+      }
+    }
+  }
+}

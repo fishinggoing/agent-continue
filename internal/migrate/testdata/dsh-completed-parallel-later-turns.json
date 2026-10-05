@@ -1,0 +1,698 @@
+{
+  "name": "dsh-completed-parallel-later-turns",
+  "direction": "dsh-to-codex",
+  "input": {
+    "header": {
+      "type": "session",
+      "version": 4,
+      "id": "synthetic-dsh",
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "isSeeded": false,
+      "delegationDepth": 0
+    },
+    "events": [
+      {
+        "type": "turn/start",
+        "seq": 0,
+        "time": 1790820000000,
+        "data": {
+          "turn": 1
+        }
+      },
+      {
+        "type": "step/start",
+        "seq": 1,
+        "time": 1790820000001,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      },
+      {
+        "type": "user/message",
+        "seq": 2,
+        "time": 1790820000002,
+        "data": {
+          "id": "dsh-user-1",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "同时读取两个文件"
+            }
+          ],
+          "source": {
+            "kind": "user"
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "assistant/message",
+        "seq": 3,
+        "time": 1790820000003,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "stream": [],
+          "message": {
+            "id": "dsh-assistant-1",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "provider": "synthetic-provider",
+              "model": "synthetic-model"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "开始并行读取："
+              },
+              {
+                "type": "tool-call",
+                "id": "call-a",
+                "name": "read_a",
+                "arguments": "{\"path\":\"甲.txt\"}"
+              },
+              {
+                "type": "tool-call",
+                "id": "call-b",
+                "name": "read_b",
+                "arguments": "{\"path\":\"乙.txt\",\"emoji\":\"🧭\"}"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "tool/call",
+        "seq": 4,
+        "time": 1790820000004,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "callId": "call-a",
+          "name": "read_a",
+          "arguments": "{\"path\":\"甲.txt\"}"
+        }
+      },
+      {
+        "type": "tool/call",
+        "seq": 5,
+        "time": 1790820000005,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "callId": "call-b",
+          "name": "read_b",
+          "arguments": "{\"path\":\"乙.txt\",\"emoji\":\"🧭\"}"
+        }
+      },
+      {
+        "type": "tool/result",
+        "seq": 6,
+        "time": 1790820000006,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "message": {
+            "id": "result-a",
+            "role": "tool",
+            "toolCallId": "call-a",
+            "source": {
+              "kind": "tool",
+              "callId": "call-a"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "甲：完成"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "tool/result",
+        "seq": 7,
+        "time": 1790820000007,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "message": {
+            "id": "result-b",
+            "role": "tool",
+            "toolCallId": "call-b",
+            "source": {
+              "kind": "tool",
+              "callId": "call-b"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "乙：完成"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "assistant/message",
+        "seq": 8,
+        "time": 1790820000008,
+        "data": {
+          "turn": 1,
+          "step": 1,
+          "stream": [],
+          "message": {
+            "id": "dsh-assistant-final",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "provider": "synthetic-provider",
+              "model": "synthetic-model"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "两项都完成。"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "step/end",
+        "seq": 9,
+        "time": 1790820000009,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      },
+      {
+        "type": "turn/end",
+        "seq": 10,
+        "time": 1790820000010,
+        "data": {
+          "turn": 1,
+          "reason": {
+            "kind": "completed"
+          }
+        }
+      },
+      {
+        "type": "turn/start",
+        "seq": 11,
+        "time": 1790820000011,
+        "data": {
+          "turn": 2
+        }
+      },
+      {
+        "type": "step/start",
+        "seq": 12,
+        "time": 1790820000012,
+        "data": {
+          "turn": 2,
+          "step": 1
+        }
+      },
+      {
+        "type": "user/message",
+        "seq": 13,
+        "time": 1790820000013,
+        "data": {
+          "id": "dsh-user-2",
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "后续问题"
+            }
+          ],
+          "source": {
+            "kind": "user"
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "assistant/message",
+        "seq": 14,
+        "time": 1790820000014,
+        "data": {
+          "turn": 2,
+          "step": 1,
+          "stream": [],
+          "message": {
+            "id": "dsh-assistant-2",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "provider": "synthetic-provider",
+              "model": "synthetic-model"
+            },
+            "content": [
+              {
+                "type": "text",
+                "text": "后续回答。"
+              }
+            ]
+          }
+        },
+        "surfaceOp": "append"
+      },
+      {
+        "type": "step/end",
+        "seq": 15,
+        "time": 1790820000015,
+        "data": {
+          "turn": 2,
+          "step": 1
+        }
+      },
+      {
+        "type": "turn/end",
+        "seq": 16,
+        "time": 1790820000016,
+        "data": {
+          "turn": 2,
+          "reason": {
+            "kind": "completed"
+          }
+        }
+      }
+    ],
+    "options": {
+      "cliVersion": "synthetic-cli",
+      "threadId": "codex-parallel",
+      "modelProvider": "synthetic-provider",
+      "startedAt": "2026-10-01T02:00:00.000Z"
+    }
+  },
+  "expected": {
+    "drafts": [
+      {
+        "payload": {
+          "cli_version": "synthetic-cli",
+          "cwd": "F:\\synthetic-workspace",
+          "history_mode": "paginated",
+          "id": "codex-parallel",
+          "model_provider": "synthetic-provider",
+          "originator": "codex_exec",
+          "runtime_workspace_roots": [
+            "F:\\synthetic-workspace"
+          ],
+          "session_id": "codex-parallel",
+          "source": "exec",
+          "thread_source": "user",
+          "timestamp": "2026-10-01T02:00:00.000Z"
+        },
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "session_meta"
+      },
+      {
+        "payload": {
+          "model_context_window": 272000,
+          "started_at": 1790820000,
+          "turn_id": "<uuid-1>",
+          "type": "task_started"
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "approval_policy": "never",
+          "cwd": "F:\\synthetic-workspace",
+          "model": "synthetic-model",
+          "root_turn_id": "<uuid-1>",
+          "sandbox_policy": {
+            "type": "disabled"
+          },
+          "turn_id": "<uuid-1>",
+          "workspace_roots": [
+            "F:\\synthetic-workspace"
+          ]
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "turn_context"
+      },
+      {
+        "payload": {
+          "content": [
+            {
+              "text": "同时读取两个文件",
+              "type": "input_text"
+            }
+          ],
+          "id": "msg_dsh-user-1",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "role": "user",
+          "type": "message"
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at_ms": 1790820000002,
+          "item": {
+            "client_id": null,
+            "content": [
+              {
+                "text": "同时读取两个文件",
+                "text_elements": [],
+                "type": "text"
+              }
+            ],
+            "id": "item_dsh-user-1",
+            "type": "UserMessage"
+          },
+          "started_at_ms": 1790820000002,
+          "thread_id": "codex-parallel",
+          "turn_id": "<uuid-1>",
+          "type": "item_completed"
+        },
+        "timestamp": "2026-10-01T02:00:00.002Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "content": [
+            {
+              "text": "开始并行读取：",
+              "type": "output_text"
+            }
+          ],
+          "id": "msg_dsh-assistant-1",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "role": "assistant",
+          "type": "message"
+        },
+        "timestamp": "2026-10-01T02:00:00.003Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at_ms": 1790820000003,
+          "item": {
+            "client_id": null,
+            "content": [
+              {
+                "text": "开始并行读取：",
+                "type": "Text"
+              }
+            ],
+            "id": "item_dsh-assistant-1",
+            "type": "AgentMessage"
+          },
+          "started_at_ms": 1790820000003,
+          "thread_id": "codex-parallel",
+          "turn_id": "<uuid-1>",
+          "type": "item_completed"
+        },
+        "timestamp": "2026-10-01T02:00:00.003Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "arguments": "{\"path\":\"甲.txt\"}",
+          "call_id": "call-a",
+          "id": "fc_call-a",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "name": "read_a",
+          "type": "function_call"
+        },
+        "timestamp": "2026-10-01T02:00:00.003Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "arguments": "{\"path\":\"乙.txt\",\"emoji\":\"🧭\"}",
+          "call_id": "call-b",
+          "id": "fc_call-b",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "name": "read_b",
+          "type": "function_call"
+        },
+        "timestamp": "2026-10-01T02:00:00.003Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "call_id": "call-a",
+          "id": "fco_call-a",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "output": "甲：完成",
+          "type": "function_call_output"
+        },
+        "timestamp": "2026-10-01T02:00:00.006Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "call_id": "call-b",
+          "id": "fco_call-b",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "output": "乙：完成",
+          "type": "function_call_output"
+        },
+        "timestamp": "2026-10-01T02:00:00.007Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "content": [
+            {
+              "text": "两项都完成。",
+              "type": "output_text"
+            }
+          ],
+          "id": "msg_dsh-assistant-final",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-1>"
+          },
+          "role": "assistant",
+          "type": "message"
+        },
+        "timestamp": "2026-10-01T02:00:00.008Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at_ms": 1790820000008,
+          "item": {
+            "client_id": null,
+            "content": [
+              {
+                "text": "两项都完成。",
+                "type": "Text"
+              }
+            ],
+            "id": "item_dsh-assistant-final",
+            "type": "AgentMessage"
+          },
+          "started_at_ms": 1790820000008,
+          "thread_id": "codex-parallel",
+          "turn_id": "<uuid-1>",
+          "type": "item_completed"
+        },
+        "timestamp": "2026-10-01T02:00:00.008Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "completed_at": 1790820000,
+          "duration_ms": 11,
+          "started_at": 1790820000,
+          "turn_id": "<uuid-1>",
+          "type": "task_complete"
+        },
+        "timestamp": "2026-10-01T02:00:00.013Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "model_context_window": 272000,
+          "started_at": 1790820000,
+          "turn_id": "<uuid-2>",
+          "type": "task_started"
+        },
+        "timestamp": "2026-10-01T02:00:00.013Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "approval_policy": "never",
+          "cwd": "F:\\synthetic-workspace",
+          "model": "synthetic-model",
+          "root_turn_id": "<uuid-2>",
+          "sandbox_policy": {
+            "type": "disabled"
+          },
+          "turn_id": "<uuid-2>",
+          "workspace_roots": [
+            "F:\\synthetic-workspace"
+          ]
+        },
+        "timestamp": "2026-10-01T02:00:00.013Z",
+        "type": "turn_context"
+      },
+      {
+        "payload": {
+          "content": [
+            {
+              "text": "后续问题",
+              "type": "input_text"
+            }
+          ],
+          "id": "msg_dsh-user-2",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-2>"
+          },
+          "role": "user",
+          "type": "message"
+        },
+        "timestamp": "2026-10-01T02:00:00.013Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at_ms": 1790820000013,
+          "item": {
+            "client_id": null,
+            "content": [
+              {
+                "text": "后续问题",
+                "text_elements": [],
+                "type": "text"
+              }
+            ],
+            "id": "item_dsh-user-2",
+            "type": "UserMessage"
+          },
+          "started_at_ms": 1790820000013,
+          "thread_id": "codex-parallel",
+          "turn_id": "<uuid-2>",
+          "type": "item_completed"
+        },
+        "timestamp": "2026-10-01T02:00:00.013Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "content": [
+            {
+              "text": "后续回答。",
+              "type": "output_text"
+            }
+          ],
+          "id": "msg_dsh-assistant-2",
+          "internal_chat_message_metadata_passthrough": {
+            "turn_id": "<uuid-2>"
+          },
+          "role": "assistant",
+          "type": "message"
+        },
+        "timestamp": "2026-10-01T02:00:00.014Z",
+        "type": "response_item"
+      },
+      {
+        "payload": {
+          "completed_at_ms": 1790820000014,
+          "item": {
+            "client_id": null,
+            "content": [
+              {
+                "text": "后续回答。",
+                "type": "Text"
+              }
+            ],
+            "id": "item_dsh-assistant-2",
+            "type": "AgentMessage"
+          },
+          "started_at_ms": 1790820000014,
+          "thread_id": "codex-parallel",
+          "turn_id": "<uuid-2>",
+          "type": "item_completed"
+        },
+        "timestamp": "2026-10-01T02:00:00.014Z",
+        "type": "event_msg"
+      },
+      {
+        "payload": {
+          "completed_at": 1790820000,
+          "duration_ms": 3,
+          "started_at": 1790820000,
+          "turn_id": "<uuid-2>",
+          "type": "task_complete"
+        },
+        "timestamp": "2026-10-01T02:00:00.016Z",
+        "type": "event_msg"
+      }
+    ],
+    "losses": [
+      "step/end: 2 dropped — Codex models turns but not steps",
+      "step/start: 2 dropped — Codex models turns but not steps"
+    ],
+    "tallies": {
+      "assistant/message": {
+        "dropped": 0,
+        "mapped": 3
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "step/end": {
+        "dropped": 2,
+        "mapped": 0,
+        "reason": "Codex models turns but not steps"
+      },
+      "step/start": {
+        "dropped": 2,
+        "mapped": 0,
+        "reason": "Codex models turns but not steps"
+      },
+      "tool/call": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "tool/result": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "turn/end": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "turn/start": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "user/message": {
+        "dropped": 0,
+        "mapped": 2
+      }
+    }
+  }
+}

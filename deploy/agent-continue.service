@@ -1,0 +1,28 @@
+[Unit]
+Description=Agent Continue session migration web service
+After=network.target
+
+[Service]
+Type=simple
+User=agent-continue
+Group=agent-continue
+WorkingDirectory=/opt/agent-continue
+EnvironmentFile=/etc/agent-continue.env
+ExecStart=/opt/agent-continue/agent-continue serve --listen 127.0.0.1:8080
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=2G
+CPUQuota=200%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

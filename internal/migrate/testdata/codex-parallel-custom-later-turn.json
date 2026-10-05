@@ -1,0 +1,479 @@
+{
+  "name": "codex-parallel-custom-later-turn",
+  "direction": "codex-to-dsh",
+  "input": {
+    "records": [
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 0,
+        "type": "session_meta",
+        "payload": {
+          "id": "codex-parallel",
+          "cwd": "F:\\synthetic-workspace",
+          "model_provider": "synthetic-provider"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 1,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "turn-one",
+          "started_at": 1790820000
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 2,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "u-one",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "先并行检查两个文件"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 3,
+        "type": "response_item",
+        "payload": {
+          "type": "function_call",
+          "id": "fc-a",
+          "call_id": "call-a",
+          "name": "read_a",
+          "arguments": "{\"path\":\"a.txt\"}"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 4,
+        "type": "response_item",
+        "payload": {
+          "type": "custom_tool_call",
+          "id": "fc-b",
+          "call_id": "call-b",
+          "name": "custom_lookup",
+          "input": {
+            "query": "βeta",
+            "limit": 2
+          }
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 5,
+        "type": "response_item",
+        "payload": {
+          "type": "function_call_output",
+          "id": "fco-a",
+          "call_id": "call-a",
+          "output": "A 完成"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 6,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "turn-one"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 7,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "turn-two",
+          "started_at": 1790820010
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 8,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "u-two",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "继续处理后续步骤"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 9,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "a-two",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "第二轮仍然保留。"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 10,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "turn-two"
+        }
+      }
+    ],
+    "options": {
+      "sessionId": "dsh-parallel",
+      "cwd": "F:\\synthetic-workspace",
+      "createdAt": 1790820000000
+    }
+  },
+  "expected": {
+    "events": [
+      {
+        "data": {
+          "turn": 1
+        },
+        "seq": 0,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 1,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [],
+            "id": "empty-system-head-dsh-parallel",
+            "role": "system",
+            "source": {
+              "kind": "system-prompt",
+              "migration": "agent-continue-empty-system-head"
+            }
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 2,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "system/message"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "先并行检查两个文件",
+              "type": "text"
+            }
+          ],
+          "id": "u-one",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 3,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "arguments": "{\"path\":\"a.txt\"}",
+                "id": "call-a",
+                "name": "read_a",
+                "type": "tool-call"
+              },
+              {
+                "arguments": "{\"query\":\"βeta\",\"limit\":2}",
+                "id": "call-b",
+                "name": "custom_lookup",
+                "type": "tool-call"
+              }
+            ],
+            "id": "msg-advertise-1-1-2",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "unknown",
+              "provider": "synthetic-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 4,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "arguments": "{\"path\":\"a.txt\"}",
+          "callId": "call-a",
+          "name": "read_a",
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 5,
+        "time": 1790820000000,
+        "type": "tool/call"
+      },
+      {
+        "data": {
+          "arguments": "{\"query\":\"βeta\",\"limit\":2}",
+          "callId": "call-b",
+          "name": "custom_lookup",
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 6,
+        "time": 1790820000000,
+        "type": "tool/call"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "A 完成",
+                "type": "text"
+              }
+            ],
+            "id": "fco-a",
+            "role": "tool",
+            "source": {
+              "callId": "call-a",
+              "kind": "tool"
+            },
+            "toolCallId": "call-a"
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 7,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "tool/result"
+      },
+      {
+        "data": {
+          "error": {
+            "code": "TOOL_OUTCOME_UNKNOWN",
+            "name": "ToolOutcomeUnknownError"
+          },
+          "message": {
+            "content": [
+              {
+                "text": "The tool call was interrupted after it was recorded, but no result was durably recorded. Its outcome is unknown. Decide whether to retry from the tool semantics: retry only if the operation is read-only or idempotent; if it may have side effects, first verify external state or ask the user. Do not retry blindly.",
+                "type": "text"
+              }
+            ],
+            "id": "interrupted-tool-result-call-b-8",
+            "isError": true,
+            "role": "tool",
+            "source": {
+              "callId": "call-b",
+              "kind": "tool"
+            },
+            "toolCallId": "call-b"
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 8,
+        "sourceEventSeqs": [
+          6
+        ],
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "tool/result"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 9,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 1
+        },
+        "seq": 10,
+        "time": 1790820000000,
+        "type": "turn/end"
+      },
+      {
+        "data": {
+          "turn": 2
+        },
+        "seq": 11,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 2
+        },
+        "seq": 12,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "继续处理后续步骤",
+              "type": "text"
+            }
+          ],
+          "id": "u-two",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 13,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "第二轮仍然保留。",
+                "type": "text"
+              }
+            ],
+            "id": "a-two",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "unknown",
+              "provider": "synthetic-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 2
+        },
+        "seq": 14,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 2
+        },
+        "seq": 15,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 2
+        },
+        "seq": 16,
+        "time": 1790820000000,
+        "type": "turn/end"
+      }
+    ],
+    "header": {
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "delegationDepth": 0,
+      "id": "dsh-parallel",
+      "isSeeded": false,
+      "type": "session",
+      "version": 4
+    },
+    "losses": [
+      "tool/result.error-status: 1 record(s) dropped — Codex tool output carries no error flag, so DSH isError is left unset rather than asserted false"
+    ],
+    "tallies": {
+      "event_msg/task_complete": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "event_msg/task_started": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "response_item/custom_tool_call": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/function_call": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/function_call_output": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/message": {
+        "dropped": 0,
+        "mapped": 3
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "tool/result.error-status": {
+        "dropped": 1,
+        "mapped": 0,
+        "reason": "Codex tool output carries no error flag, so DSH isError is left unset rather than asserted false"
+      },
+      "tool/result.synthesized-unknown": {
+        "dropped": 0,
+        "mapped": 1
+      }
+    }
+  }
+}

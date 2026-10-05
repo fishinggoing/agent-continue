@@ -1,0 +1,288 @@
+{
+  "name": "codex-machine-unknown",
+  "direction": "codex-to-dsh",
+  "input": {
+    "records": [
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 0,
+        "type": "session_meta",
+        "payload": {
+          "id": "codex-unknown",
+          "cwd": "F:\\synthetic-workspace",
+          "model_provider": "synthetic-provider"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 1,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "turn-unknown",
+          "started_at": 1790820000
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 2,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "u-unknown",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "检查未知结果"
+            }
+          ],
+          "recovery": "TOOL_OUTCOME_UNKNOWN",
+          "pending_operations": [
+            {
+              "callId": "call-unknown",
+              "name": "write_file",
+              "state": "unknown"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 3,
+        "type": "response_item",
+        "payload": {
+          "type": "function_call",
+          "id": "fc-unknown",
+          "call_id": "call-unknown",
+          "name": "write_file",
+          "arguments": "{\"path\":\"结果.txt\",\"text\":\"保留\"}"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 4,
+        "type": "response_item",
+        "payload": {
+          "type": "function_call_output",
+          "id": "fco-unknown",
+          "call_id": "call-unknown",
+          "output": "interrupted",
+          "isError": true,
+          "recovery": "TOOL_OUTCOME_UNKNOWN"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 5,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "turn-unknown"
+        }
+      }
+    ],
+    "options": {
+      "sessionId": "dsh-unknown",
+      "cwd": "F:\\synthetic-workspace",
+      "createdAt": 1790820000000
+    }
+  },
+  "expected": {
+    "events": [
+      {
+        "data": {
+          "turn": 1
+        },
+        "seq": 0,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 1,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [],
+            "id": "empty-system-head-dsh-unknown",
+            "role": "system",
+            "source": {
+              "kind": "system-prompt",
+              "migration": "agent-continue-empty-system-head"
+            }
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 2,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "system/message"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "检查未知结果",
+              "type": "text"
+            }
+          ],
+          "id": "u-unknown",
+          "role": "user",
+          "source": {
+            "kind": "user",
+            "pendingOperations": [
+              {
+                "callId": "call-unknown",
+                "name": "write_file",
+                "state": "unknown"
+              }
+            ],
+            "recovery": "TOOL_OUTCOME_UNKNOWN"
+          }
+        },
+        "seq": 3,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "arguments": "{\"path\":\"结果.txt\",\"text\":\"保留\"}",
+                "id": "call-unknown",
+                "name": "write_file",
+                "type": "tool-call"
+              }
+            ],
+            "id": "msg-advertise-1-1-1",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "unknown",
+              "provider": "synthetic-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 4,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "arguments": "{\"path\":\"结果.txt\",\"text\":\"保留\"}",
+          "callId": "call-unknown",
+          "name": "write_file",
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 5,
+        "time": 1790820000000,
+        "type": "tool/call"
+      },
+      {
+        "data": {
+          "error": {
+            "code": "TOOL_OUTCOME_UNKNOWN",
+            "name": "ToolOutcomeUnknownError"
+          },
+          "message": {
+            "content": [
+              {
+                "text": "interrupted",
+                "type": "text"
+              }
+            ],
+            "id": "fco-unknown",
+            "isError": true,
+            "role": "tool",
+            "source": {
+              "callId": "call-unknown",
+              "kind": "tool"
+            },
+            "toolCallId": "call-unknown"
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 6,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "tool/result"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 7,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 1
+        },
+        "seq": 8,
+        "time": 1790820000000,
+        "type": "turn/end"
+      }
+    ],
+    "header": {
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "delegationDepth": 0,
+      "id": "dsh-unknown",
+      "isSeeded": false,
+      "type": "session",
+      "version": 4
+    },
+    "losses": [],
+    "tallies": {
+      "event_msg/task_complete": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "event_msg/task_started": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/function_call": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/function_call_output": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/message": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      }
+    }
+  }
+}

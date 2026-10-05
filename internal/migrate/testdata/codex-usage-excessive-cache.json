@@ -1,0 +1,222 @@
+{
+  "name": "codex-usage-excessive-cache",
+  "direction": "codex-to-dsh",
+  "input": {
+    "records": [
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "session_meta",
+        "payload": {
+          "id": "synthetic-usage-source",
+          "cwd": "F:\\synthetic-workspace",
+          "model_provider": "test-provider"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "synthetic-usage-turn"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "SYNTHETIC USAGE QUESTION"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "token_usage_record",
+        "payload": {
+          "turn_id": "synthetic-usage-turn",
+          "turn_token_usage": {
+            "input_tokens": 12,
+            "output_tokens": 4,
+            "cached_input_tokens": 13
+          }
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "SYNTHETIC USAGE ANSWER"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "synthetic-usage-turn"
+        }
+      }
+    ],
+    "options": {
+      "sessionId": "dsh-usage",
+      "cwd": "F:\\synthetic-workspace",
+      "createdAt": 1790820000000
+    }
+  },
+  "expected": {
+    "events": [
+      {
+        "data": {
+          "turn": 1
+        },
+        "seq": 0,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 1,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [],
+            "id": "empty-system-head-dsh-usage",
+            "role": "system",
+            "source": {
+              "kind": "system-prompt",
+              "migration": "agent-continue-empty-system-head"
+            }
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 2,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "system/message"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "SYNTHETIC USAGE QUESTION",
+              "type": "text"
+            }
+          ],
+          "id": "msg-3",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 3,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "SYNTHETIC USAGE ANSWER",
+                "type": "text"
+              }
+            ],
+            "id": "msg-4",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "unknown",
+              "provider": "test-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 4,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 5,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 1
+        },
+        "seq": 6,
+        "time": 1790820000000,
+        "type": "turn/end"
+      }
+    ],
+    "header": {
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "delegationDepth": 0,
+      "id": "dsh-usage",
+      "isSeeded": false,
+      "type": "session",
+      "version": 4
+    },
+    "losses": [
+      "token_usage_record: 1 record(s) dropped — cache counters exceed aggregate input_tokens; usage omitted rather than emitting negative uncached input"
+    ],
+    "tallies": {
+      "event_msg/task_complete": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "event_msg/task_started": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/message": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "token_usage_record": {
+        "dropped": 1,
+        "mapped": 0,
+        "reason": "cache counters exceed aggregate input_tokens; usage omitted rather than emitting negative uncached input"
+      }
+    }
+  }
+}

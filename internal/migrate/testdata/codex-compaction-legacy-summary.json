@@ -1,0 +1,387 @@
+{
+  "name": "codex-compaction-legacy-summary",
+  "direction": "codex-to-dsh",
+  "input": {
+    "records": [
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 0,
+        "type": "session_meta",
+        "payload": {
+          "id": "codex-summary-compaction",
+          "cwd": "F:\\synthetic-workspace",
+          "model_provider": "synthetic-provider"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 1,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "summary-before",
+          "started_at": 1790820000
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 2,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "summary-question",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "压缩前的问题"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 3,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "summary-answer",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "压缩前的答案"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 4,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "summary-before"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 5,
+        "type": "compacted",
+        "payload": {
+          "message": "只含纯文本的压缩摘要：继续工作 ☕"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 6,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "summary-after",
+          "started_at": 1790820010
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 7,
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "id": "summary-followup",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "摘要之后的问题"
+            }
+          ]
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 8,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "summary-after"
+        }
+      }
+    ],
+    "options": {
+      "sessionId": "dsh-summary-compaction",
+      "cwd": "F:\\synthetic-workspace",
+      "createdAt": 1790820000000
+    }
+  },
+  "expected": {
+    "events": [
+      {
+        "data": {
+          "turn": 1
+        },
+        "seq": 0,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 1,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [],
+            "id": "empty-system-head-dsh-summary-compaction",
+            "role": "system",
+            "source": {
+              "kind": "system-prompt",
+              "migration": "agent-continue-empty-system-head"
+            }
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 2,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "system/message"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "压缩前的问题",
+              "type": "text"
+            }
+          ],
+          "id": "summary-question",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 3,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "压缩前的答案",
+                "type": "text"
+              }
+            ],
+            "id": "summary-answer",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "unknown",
+              "provider": "synthetic-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 4,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 5,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 1
+        },
+        "seq": 6,
+        "time": 1790820000000,
+        "type": "turn/end"
+      },
+      {
+        "data": {
+          "turn": 2
+        },
+        "seq": 7,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 2
+        },
+        "seq": 8,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "只含纯文本的压缩摘要：继续工作 ☕",
+              "type": "text"
+            }
+          ],
+          "id": "msg-3",
+          "role": "user",
+          "source": {
+            "kind": "agent-continue-codex-compaction",
+            "sourceOrdinal": 5
+          }
+        },
+        "seq": 9,
+        "sourceEventSeqs": [
+          3,
+          4
+        ],
+        "surfaceOp": {
+          "endSeq": 4,
+          "op": "replace",
+          "startSeq": 3
+        },
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 2
+        },
+        "seq": 10,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "interrupted"
+          },
+          "turn": 2
+        },
+        "seq": 11,
+        "time": 1790820000000,
+        "type": "turn/end"
+      },
+      {
+        "data": {
+          "turn": 3
+        },
+        "seq": 12,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 3
+        },
+        "seq": 13,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "摘要之后的问题",
+              "type": "text"
+            }
+          ],
+          "id": "summary-followup",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 14,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 3
+        },
+        "seq": 15,
+        "time": 1790820000000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 3
+        },
+        "seq": 16,
+        "time": 1790820000000,
+        "type": "turn/end"
+      }
+    ],
+    "header": {
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "delegationDepth": 0,
+      "id": "dsh-summary-compaction",
+      "isSeeded": false,
+      "type": "session",
+      "version": 4
+    },
+    "losses": [],
+    "tallies": {
+      "compacted": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "compacted.context/response_item/message": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "compacted.context/system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "event_msg/task_complete": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "event_msg/task_started": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "response_item/message": {
+        "dropped": 0,
+        "mapped": 3
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      }
+    }
+  }
+}

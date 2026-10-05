@@ -1,0 +1,153 @@
+{
+  "name": "codex-pending-tail",
+  "direction": "codex-to-dsh",
+  "input": {
+    "records": [
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 0,
+        "type": "session_meta",
+        "payload": {
+          "id": "codex-pending",
+          "cwd": "F:\\synthetic-workspace",
+          "model_provider": "synthetic-provider"
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 1,
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "turn-pending",
+          "started_at": 1790820000
+        }
+      },
+      {
+        "timestamp": "2026-10-01T02:00:00.000Z",
+        "ordinal": 2,
+        "type": "response_item",
+        "payload": {
+          "type": "function_call",
+          "id": "fc-pending",
+          "call_id": "call-pending",
+          "name": "shell",
+          "arguments": "{\"command\":\"echo 保留\"}"
+        }
+      }
+    ],
+    "options": {
+      "sessionId": "dsh-pending",
+      "cwd": "F:\\synthetic-workspace",
+      "createdAt": 1790820000000
+    }
+  },
+  "expected": {
+    "events": [
+      {
+        "data": {
+          "turn": 1
+        },
+        "seq": 0,
+        "time": 1790820000000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 1,
+        "time": 1790820000000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [],
+            "id": "empty-system-head-dsh-pending",
+            "role": "system",
+            "source": {
+              "kind": "system-prompt",
+              "migration": "agent-continue-empty-system-head"
+            }
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 2,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "system/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "arguments": "{\"command\":\"echo 保留\"}",
+                "id": "call-pending",
+                "name": "shell",
+                "type": "tool-call"
+              }
+            ],
+            "id": "msg-advertise-1-1-1",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "unknown",
+              "provider": "synthetic-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 3,
+        "surfaceOp": "append",
+        "time": 1790820000000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "arguments": "{\"command\":\"echo 保留\"}",
+          "callId": "call-pending",
+          "name": "shell",
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 4,
+        "time": 1790820000000,
+        "type": "tool/call"
+      }
+    ],
+    "header": {
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "delegationDepth": 0,
+      "id": "dsh-pending",
+      "isSeeded": false,
+      "type": "session",
+      "version": 4
+    },
+    "losses": [],
+    "tallies": {
+      "event_msg/task_started": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/function_call": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      }
+    }
+  }
+}

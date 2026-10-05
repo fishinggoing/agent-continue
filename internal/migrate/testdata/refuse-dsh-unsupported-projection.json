@@ -1,0 +1,49 @@
+{
+  "name": "refuse-dsh-unsupported-projection",
+  "direction": "dsh-to-codex",
+  "input": {
+    "header": {
+      "type": "session",
+      "version": 4,
+      "id": "synthetic-dsh",
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "isSeeded": false,
+      "delegationDepth": 0
+    },
+    "events": [
+      {
+        "type": "turn/start",
+        "seq": 0,
+        "time": 1790820000000,
+        "data": {
+          "turn": 1
+        }
+      },
+      {
+        "type": "step/start",
+        "seq": 1,
+        "time": 1790820000001,
+        "data": {
+          "turn": 1,
+          "step": 1
+        }
+      },
+      {
+        "type": "synthetic-plugin/message-projection",
+        "seq": 2,
+        "time": 1790820000002,
+        "data": {
+          "opaque": "projection payload"
+        },
+        "surfaceOp": "append"
+      }
+    ],
+    "options": {
+      "cliVersion": "synthetic-cli",
+      "threadId": "refuse-projection",
+      "startedAt": "2026-10-01T02:00:00.000Z"
+    }
+  },
+  "expectedError": "Refusing migration: unsupported surface projection synthetic-plugin/message-projection"
+}

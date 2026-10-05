@@ -1,0 +1,7 @@
+# Replace the domain, then run Caddy on the server for automatic HTTPS.
+continue.example.com {
+    request_body {
+        max_size 17MB
+    }
+    reverse_proxy 127.0.0.1:8080
+}

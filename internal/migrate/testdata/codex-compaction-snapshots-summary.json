@@ -1,0 +1,663 @@
+{
+  "name": "codex-compaction-snapshots-summary",
+  "direction": "codex-to-dsh",
+  "input": {
+    "records": [
+      {
+        "type": "session_meta",
+        "payload": {
+          "id": "compaction-source",
+          "cwd": "F:\\synthetic-workspace",
+          "model_provider": "source-provider"
+        },
+        "ordinal": 0,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "first"
+        },
+        "ordinal": 1,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "turn_context",
+        "payload": {
+          "turn_id": "first",
+          "model": "source-model"
+        },
+        "ordinal": 2,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "ORIGINAL REQUIREMENTS"
+            }
+          ]
+        },
+        "ordinal": 3,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "OBSOLETE PARTIAL PLAN"
+            }
+          ]
+        },
+        "ordinal": 4,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "response_item",
+        "payload": {
+          "type": "function_call",
+          "name": "read",
+          "call_id": "archived-call",
+          "arguments": "{}"
+        },
+        "ordinal": 5,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "response_item",
+        "payload": {
+          "type": "function_call_output",
+          "call_id": "archived-call",
+          "output": "ARCHIVED TOOL RESULT"
+        },
+        "ordinal": 6,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "first"
+        },
+        "ordinal": 7,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "compacted",
+        "payload": {
+          "message": "UNUSED SUMMARY FALLBACK 0",
+          "replacement_history": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "压缩后的当前摘要：阶段二待处理。"
+                }
+              ]
+            }
+          ],
+          "window_id": "window-0"
+        },
+        "ordinal": 8,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "compacted",
+        "payload": {
+          "message": "UNUSED SUMMARY FALLBACK 1",
+          "replacement_history": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "最终摘要：保留 Unicode ☕"
+                }
+              ]
+            }
+          ],
+          "window_id": "window-1"
+        },
+        "ordinal": 9,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "event_msg",
+        "payload": {
+          "type": "task_started",
+          "turn_id": "followup"
+        },
+        "ordinal": 10,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "CONTINUE AFTER COMPACTION"
+            }
+          ]
+        },
+        "ordinal": 11,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "response_item",
+        "payload": {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "POST-COMPACTION WORK"
+            }
+          ]
+        },
+        "ordinal": 12,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      },
+      {
+        "type": "event_msg",
+        "payload": {
+          "type": "task_complete",
+          "turn_id": "followup"
+        },
+        "ordinal": 13,
+        "timestamp": "2026-10-01T00:00:00.000Z"
+      }
+    ],
+    "options": {
+      "sessionId": "dsh-compaction",
+      "cwd": "F:\\synthetic-workspace",
+      "createdAt": 1790820000000
+    }
+  },
+  "expected": {
+    "events": [
+      {
+        "data": {
+          "turn": 1
+        },
+        "seq": 0,
+        "time": 1790812800000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 1,
+        "time": 1790812800000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [],
+            "id": "empty-system-head-dsh-compaction",
+            "role": "system",
+            "source": {
+              "kind": "system-prompt",
+              "migration": "agent-continue-empty-system-head"
+            }
+          },
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 2,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "system/message"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "ORIGINAL REQUIREMENTS",
+              "type": "text"
+            }
+          ],
+          "id": "msg-3",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 3,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "OBSOLETE PARTIAL PLAN",
+                "type": "text"
+              }
+            ],
+            "id": "msg-4",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "source-model",
+              "provider": "source-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 4,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 1
+        },
+        "seq": 5,
+        "time": 1790812800000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "step": 2,
+          "turn": 1
+        },
+        "seq": 6,
+        "time": 1790812800000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "arguments": "{}",
+                "id": "archived-call",
+                "name": "read",
+                "type": "tool-call"
+              }
+            ],
+            "id": "msg-advertise-1-2-1",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "source-model",
+              "provider": "source-provider"
+            }
+          },
+          "step": 2,
+          "stream": [],
+          "turn": 1
+        },
+        "seq": 7,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "arguments": "{}",
+          "callId": "archived-call",
+          "name": "read",
+          "step": 2,
+          "turn": 1
+        },
+        "seq": 8,
+        "time": 1790812800000,
+        "type": "tool/call"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "ARCHIVED TOOL RESULT",
+                "type": "text"
+              }
+            ],
+            "id": "tool-9",
+            "role": "tool",
+            "source": {
+              "callId": "archived-call",
+              "kind": "tool"
+            },
+            "toolCallId": "archived-call"
+          },
+          "step": 2,
+          "turn": 1
+        },
+        "seq": 9,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "tool/result"
+      },
+      {
+        "data": {
+          "step": 2,
+          "turn": 1
+        },
+        "seq": 10,
+        "time": 1790812800000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 1
+        },
+        "seq": 11,
+        "time": 1790812800000,
+        "type": "turn/end"
+      },
+      {
+        "data": {
+          "turn": 2
+        },
+        "seq": 12,
+        "time": 1790812800000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 2
+        },
+        "seq": 13,
+        "time": 1790812800000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "压缩后的当前摘要：阶段二待处理。",
+              "type": "text"
+            }
+          ],
+          "id": "msg-3",
+          "role": "user",
+          "source": {
+            "kind": "agent-continue-codex-compaction",
+            "sourceOrdinal": 8,
+            "sourceWindowId": "window-0"
+          }
+        },
+        "seq": 14,
+        "sourceEventSeqs": [
+          3,
+          4,
+          7,
+          9
+        ],
+        "surfaceOp": {
+          "endSeq": 9,
+          "op": "replace",
+          "startSeq": 3
+        },
+        "time": 1790812800000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 2
+        },
+        "seq": 15,
+        "time": 1790812800000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "interrupted"
+          },
+          "turn": 2
+        },
+        "seq": 16,
+        "time": 1790812800000,
+        "type": "turn/end"
+      },
+      {
+        "data": {
+          "turn": 3
+        },
+        "seq": 17,
+        "time": 1790812800000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 3
+        },
+        "seq": 18,
+        "time": 1790812800000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "最终摘要：保留 Unicode ☕",
+              "type": "text"
+            }
+          ],
+          "id": "msg-3",
+          "role": "user",
+          "source": {
+            "kind": "agent-continue-codex-compaction",
+            "sourceOrdinal": 9,
+            "sourceWindowId": "window-1"
+          }
+        },
+        "seq": 19,
+        "sourceEventSeqs": [
+          14
+        ],
+        "surfaceOp": {
+          "endSeq": 14,
+          "op": "replace",
+          "startSeq": 14
+        },
+        "time": 1790812800000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 3
+        },
+        "seq": 20,
+        "time": 1790812800000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "interrupted"
+          },
+          "turn": 3
+        },
+        "seq": 21,
+        "time": 1790812800000,
+        "type": "turn/end"
+      },
+      {
+        "data": {
+          "turn": 4
+        },
+        "seq": 22,
+        "time": 1790812800000,
+        "type": "turn/start"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 4
+        },
+        "seq": 23,
+        "time": 1790812800000,
+        "type": "step/start"
+      },
+      {
+        "data": {
+          "content": [
+            {
+              "text": "CONTINUE AFTER COMPACTION",
+              "type": "text"
+            }
+          ],
+          "id": "msg-24",
+          "role": "user",
+          "source": {
+            "kind": "user"
+          }
+        },
+        "seq": 24,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "user/message"
+      },
+      {
+        "data": {
+          "message": {
+            "content": [
+              {
+                "text": "POST-COMPACTION WORK",
+                "type": "text"
+              }
+            ],
+            "id": "msg-25",
+            "role": "assistant",
+            "source": {
+              "kind": "model",
+              "model": "source-model",
+              "provider": "source-provider"
+            }
+          },
+          "step": 1,
+          "stream": [],
+          "turn": 4
+        },
+        "seq": 25,
+        "surfaceOp": "append",
+        "time": 1790812800000,
+        "type": "assistant/message"
+      },
+      {
+        "data": {
+          "step": 1,
+          "turn": 4
+        },
+        "seq": 26,
+        "time": 1790812800000,
+        "type": "step/end"
+      },
+      {
+        "data": {
+          "reason": {
+            "kind": "completed"
+          },
+          "turn": 4
+        },
+        "seq": 27,
+        "time": 1790812800000,
+        "type": "turn/end"
+      }
+    ],
+    "header": {
+      "createdAt": 1790820000000,
+      "cwd": "F:\\synthetic-workspace",
+      "delegationDepth": 0,
+      "id": "dsh-compaction",
+      "isSeeded": false,
+      "type": "session",
+      "version": 4
+    },
+    "losses": [
+      "compacted.metadata: 2 record(s) dropped — Codex window lineage, retained-context annotations and resume/token bookkeeping are not DSH native state",
+      "tool/result.error-status: 1 record(s) dropped — Codex tool output carries no error flag, so DSH isError is left unset rather than asserted false"
+    ],
+    "tallies": {
+      "compacted": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "compacted.context/response_item/message": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "compacted.context/system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "compacted.metadata": {
+        "dropped": 2,
+        "mapped": 0,
+        "reason": "Codex window lineage, retained-context annotations and resume/token bookkeeping are not DSH native state"
+      },
+      "event_msg/task_complete": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "event_msg/task_started": {
+        "dropped": 0,
+        "mapped": 2
+      },
+      "response_item/function_call": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/function_call_output": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "response_item/message": {
+        "dropped": 0,
+        "mapped": 4
+      },
+      "session_meta": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "system/message.empty-head": {
+        "dropped": 0,
+        "mapped": 1
+      },
+      "tool/result.error-status": {
+        "dropped": 1,
+        "mapped": 0,
+        "reason": "Codex tool output carries no error flag, so DSH isError is left unset rather than asserted false"
+      },
+      "turn_context": {
+        "dropped": 0,
+        "mapped": 1
+      }
+    }
+  }
+}

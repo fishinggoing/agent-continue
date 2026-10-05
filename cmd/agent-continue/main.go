@@ -1,0 +1,47 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/fishinggoing/agent-continue/internal/app"
+	"github.com/fishinggoing/agent-continue/internal/cli"
+	"github.com/fishinggoing/agent-continue/internal/server"
+)
+
+func main() {
+	if err := run(); err != nil {
+		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"status": "failed", "error": err.Error()})
+		os.Exit(1)
+	}
+}
+func run() error {
+	args := os.Args[1:]
+	if handled, err := cli.Execute(args, os.Stdout, os.LookupEnv); handled {
+		return err
+	}
+	command, flags, e := app.ParseArgs(args)
+	if e != nil {
+		return e
+	}
+	if command == "serve" {
+		listen := flags["listen"]
+		if listen == "" {
+			listen = "127.0.0.1:8080"
+		}
+		return server.Run(listen, os.Getenv("AGENT_CONTINUE_TOKEN"))
+	}
+	report, e := app.Execute(args)
+	if e != nil {
+		return e
+	}
+	if report["command"] == "help" {
+		fmt.Println(report["usage"])
+		fmt.Println(cli.Usage)
+		return nil
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(report)
+}
