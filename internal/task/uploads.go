@@ -72,6 +72,9 @@ func writeUpload(root *os.Root, file FileInput) error {
 }
 
 func (f *Files) List() ([]string, error) {
+	if f.local != nil {
+		return f.listLocal()
+	}
 	if !f.generic {
 		return []string{"pricing.json", "pricing.test.json"}, nil
 	}

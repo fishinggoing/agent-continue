@@ -289,7 +289,7 @@ func Validate(c Config) error {
 	}
 	for _, tool := range c.Tools.AllowedTools {
 		switch tool {
-		case "list_files", "read_file", "search", "apply_patch", "diff", "exec":
+		case "list_files", "read_file", "search", "apply_patch", "create_file", "diff", "exec":
 		default:
 			return bad("tools.allowedTools", "unknown tool name")
 		}

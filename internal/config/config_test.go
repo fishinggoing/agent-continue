@@ -162,3 +162,12 @@ func TestCommandEnvironmentIsAnAllowlist(t *testing.T) {
 		t.Fatalf("environment = %v", got)
 	}
 }
+
+func TestCreateFileIsAValidConfiguredWriteTool(t *testing.T) {
+	c, _ := fixture(t)
+	c.Tools.Mode = "allow"
+	c.Tools.AllowedTools = []string{"create_file", "apply_patch"}
+	if err := Validate(c); err != nil {
+		t.Fatal(err)
+	}
+}

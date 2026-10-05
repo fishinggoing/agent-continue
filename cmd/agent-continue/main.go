@@ -1,9 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/mattn/go-isatty"
 
 	"github.com/fishinggoing/agent-continue/internal/app"
 	"github.com/fishinggoing/agent-continue/internal/cli"
@@ -13,14 +18,18 @@ import (
 func main() {
 	if err := run(); err != nil {
 		_ = json.NewEncoder(os.Stderr).Encode(map[string]any{"status": "failed", "error": err.Error()})
-		os.Exit(1)
+		os.Exit(cli.ExitCode(err))
 	}
 }
 func run() error {
 	args := os.Args[1:]
-	if handled, err := cli.Execute(args, os.Stdout, os.LookupEnv); handled {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	streams := cli.Streams{In: os.Stdin, Out: os.Stdout, Err: os.Stderr, Interactive: isatty.IsTerminal(os.Stdin.Fd()) && isatty.IsTerminal(os.Stderr.Fd())}
+	if handled, err := cli.ExecuteContext(ctx, args, streams, os.LookupEnv); handled {
 		return err
 	}
+	stop()
 	command, flags, e := app.ParseArgs(args)
 	if e != nil {
 		return e

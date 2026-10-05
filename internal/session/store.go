@@ -19,6 +19,17 @@ type Store struct {
 }
 
 func Open(dir string) (*Store, error) {
+	return OpenMode(dir, "web")
+}
+
+// OpenMode keeps local CLI histories outside the HTTP workbench boundary.
+func OpenMode(dir, mode string) (*Store, error) {
+	modeID := 1
+	if mode == "cli" {
+		modeID = 2
+	} else if mode != "web" {
+		return nil, errors.New("unsupported session storage mode")
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -37,6 +48,12 @@ func Open(dir string) (*Store, error) {
 	if err = lockFile(lock); err != nil {
 		lock.Close()
 		return nil, errors.New("workbench data directory is already in use")
+	}
+	_, existingErr := os.Lstat(filepath.Join(dir, "sessions-v1.sqlite"))
+	newDatabase := errors.Is(existingErr, os.ErrNotExist)
+	if existingErr != nil && !newDatabase {
+		lock.Close()
+		return nil, errors.New("cannot inspect private workbench storage")
 	}
 	database, err := openPrivateFile(filepath.Join(dir, "sessions-v1.sqlite"))
 	if err != nil {
@@ -67,6 +84,19 @@ func Open(dir string) (*Store, error) {
 	if err = db.QueryRow("SELECT value FROM metadata WHERE key='version'").Scan(&version); err != nil || version != 1 {
 		s.Close()
 		return nil, errors.New("unsupported workbench database version")
+	}
+	var storedMode int
+	err = db.QueryRow("SELECT value FROM metadata WHERE key='storage_mode'").Scan(&storedMode)
+	if errors.Is(err, sql.ErrNoRows) {
+		storedMode = 1 // Existing unmarked databases belong to the web workbench.
+		if newDatabase {
+			storedMode = modeID
+		}
+		_, err = db.Exec("INSERT INTO metadata(key,value) VALUES('storage_mode',?)", storedMode)
+	}
+	if err != nil || storedMode != modeID {
+		s.Close()
+		return nil, errors.New("session database belongs to a different application mode")
 	}
 	return s, nil
 }

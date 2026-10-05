@@ -20,7 +20,7 @@ func (u UserService) authorize(id string) error {
 	u.service.mu.Lock()
 	defer u.service.mu.Unlock()
 	snap := u.service.sessions[id]
-	if u.owner == "" || snap == nil || snap.OwnerID != u.owner {
+	if u.service.local || u.owner == "" || snap == nil || snap.OwnerID != u.owner {
 		return ErrNotFound
 	}
 	return nil
@@ -28,6 +28,9 @@ func (u UserService) authorize(id string) error {
 
 func (u UserService) List() []Snapshot {
 	result := []Snapshot{}
+	if u.service.local {
+		return result
+	}
 	for _, snap := range u.service.List() {
 		if u.owner != "" && snap.OwnerID == u.owner {
 			result = append(result, snap)

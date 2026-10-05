@@ -28,6 +28,33 @@ The workbench directory uses mode 0700 and database/settings files use mode 0600
 
 ## Resource Limits and Verification
 
+Local `run`, `chat` and `resume` use an explicitly configured workspace and
+environment model credentials. CLI sessions live in `dataDir/cli-v1` and carry
+a persistent database mode which the HTTP workbench refuses to open. HTTP user
+views also reject local sessions. CLI does not load browser API key settings or
+persist its environment key. Session queries can run without the key.
+
+Local tools exclude config/data/cache paths, hidden and credential paths,
+database files, dependencies, symlinks and hardlinks. Linked config paths and
+Windows filename aliases using tilde, trailing dot/space or device names are
+rejected. Known model keys and the injected web access token are filtered from
+file results and reflected model output before persistence, including fragmented
+deltas and escaped JSON arguments. Filename checks cannot detect every secret
+embedded in arbitrary source files; keep unrelated secrets outside permitted
+workspaces. Conversation exports contain private message and tool content.
+
+Local writes default to readonly. Ask mode requires an approval bound to the
+current run and arguments; JSON or noninteractive execution denies it promptly.
+Explicit local allow mode only executes listed write tools. Terminal output
+filters control/format characters. Cancellation and configured duration limits
+continue to be processed while the CLI waits for an approval answer.
+
+The database has an exclusive process lock. Exact workspace roots also acquire
+OS file locks in the user cache across configurations, released on completion,
+cancellation or process exit. Ancestor overlap detection applies within one
+service instance; different configurations using overlapping roots should not
+run simultaneously. No arbitrary shell/process tools are available.
+
 Authentication attempts are limited to 10 per peer IP per minute and 120 globally; trusted proxies may supply the overwritten client IP. API concurrency is bounded at 64 requests. Event streams are limited to two per user and 32 globally. Ordinary users have at most ten sessions and one active run. The existing four-run/100-session global limits reserve one active run and ten session slots for the owner. Rejected starts do not leave uploaded workspaces behind.
 
 Security regression tests use synthetic credentials and conversations, never production secrets or paid model calls:
@@ -35,7 +62,7 @@ Security regression tests use synthetic credentials and conversations, never pro
 ```sh
 go test ./...
 go vet ./...
-go test -race ./internal/server ./internal/task ./internal/session ./internal/provider
+go test -race ./internal/cli ./internal/server ./internal/task ./internal/session ./internal/provider
 ```
 
 `scripts/security-web-smoke.mjs` verifies the actual browser login, user creation/revocation, foreign-session rejection, Markdown sanitization, logout replay and desktop/mobile settings against an isolated local server using its fixed synthetic access token. Linux tests also check database/settings permissions and symlink refusal.
@@ -43,3 +70,13 @@ go test -race ./internal/server ./internal/task ./internal/session ./internal/pr
 These changes reduce the verified application attack paths. They do not replace HTTPS certificate validation, firewall restrictions, OS access control, patching or protection against traffic that saturates the network before reaching the application.
 
 Measured on 2026-10-05: full Windows Go tests and `go vet` passed, as did race detection for server/task/session/provider. The same four packages' cross-compiled Go test binaries passed under WSL Ubuntu, including the Unix permission and symlink cases skipped on Windows. Edge browser regression passed at 1440x960 and 390x844 using synthetic data. `govulncheck` reported no known Go vulnerabilities. An independent code review's escaped-key reflection and revocation findings were fixed and verified. Public deployment, TLS certificates and live proxy configuration have not been changed or validated in this window.
+
+Local CLI verification on 2026-10-05: the full Windows Go suite and vet passed;
+race checks passed for CLI/task/session/provider/server, and Linux tests for
+those packages passed. Synthetic binary tests exercised run/chat/resume,
+credential-free exports and actual Linux SIGINT cancellation with persisted
+state and released locks. Regression tests cover approval input that remains
+blocked past run timeout/cancellation, config links, Windows path aliases,
+restart without write replay and preserved Unix executable permissions.
+Independent review findings were repaired and rechecked. No paid model calls
+or original user conversations were used in these tests.

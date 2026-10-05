@@ -41,6 +41,9 @@ func (s *Service) credentialLocked() (string, error) {
 	if s.modelKey != "" {
 		return s.modelKey, nil
 	}
+	if s.local {
+		return "", errors.New("model credential environment variable is not set")
+	}
 	return config.Credential(s.config.Provider, os.LookupEnv)
 }
 
@@ -88,6 +91,9 @@ func validateKey(key string) error {
 }
 
 func (s *Service) ConfigureModel(model, key string) error {
+	if s.local {
+		return errors.New("local model settings must be supplied through configuration and environment")
+	}
 	key = strings.TrimSpace(key)
 	if err := validateKey(key); err != nil {
 		return err

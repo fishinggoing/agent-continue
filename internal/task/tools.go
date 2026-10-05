@@ -31,6 +31,7 @@ const testCases = `[
 type Files struct {
 	root    *os.Root
 	generic bool
+	local   *localPolicy
 }
 type Patch struct {
 	Path   string `json:"path"`
@@ -75,6 +76,9 @@ func (f *Files) Validate(ctx context.Context, call domain.ToolCall) (domain.Vali
 	if len(call.Arguments) > 256<<10 || call.ID == "" {
 		return domain.ValidatedToolCall{}, errors.New("invalid call size or identity")
 	}
+	if f.local != nil && containsProtectedJSON(call.Arguments, f.local.secrets) {
+		return domain.ValidatedToolCall{}, errors.New("tool arguments contain a protected model credential")
+	}
 	var args any
 	switch call.Name {
 	case "list_files", "run_tests":
@@ -108,6 +112,9 @@ func (f *Files) Validate(ctx context.Context, call domain.ToolCall) (domain.Vali
 		if !f.generic || strictJSON(call.Arguments, &v) != nil || validateUploads([]FileInput{v}) != nil {
 			return domain.ValidatedToolCall{}, errors.New("invalid new file scope or content")
 		}
+		if !f.allowed(v.Path) || f.local != nil && containsProtectedText(v.Content, f.local.secrets) {
+			return domain.ValidatedToolCall{}, errors.New("invalid new file scope or content")
+		}
 		args = v
 	default:
 		return domain.ValidatedToolCall{}, errors.New("unknown tool")
@@ -119,6 +126,9 @@ func (f *Files) Validate(ctx context.Context, call domain.ToolCall) (domain.Vali
 
 func allowedFile(path string) bool { return path == "pricing.json" || path == "pricing.test.json" }
 func (f *Files) allowed(name string) bool {
+	if f.local != nil {
+		return f.localCheck(name, true) == nil
+	}
 	if f.generic {
 		return validPath(name)
 	}
@@ -140,12 +150,20 @@ func (f *Files) Read(path string) (string, error) {
 		return "", err
 	}
 	defer h.Close()
+	if f.local != nil {
+		if f.localCheck(path, false) != nil || hasMultipleLinks(h) {
+			return "", errors.New("local file links are not permitted")
+		}
+	}
 	b, err := io.ReadAll(io.LimitReader(h, maxFileBytes+1))
 	if len(b) > maxFileBytes {
 		return "", errors.New("file too large")
 	}
 	if !utf8.Valid(b) || strings.ContainsRune(string(b), 0) {
 		return "", errors.New("expected UTF-8 text")
+	}
+	if f.local != nil && containsProtectedText(string(b), f.local.secrets) {
+		return "", errors.New("file contains a protected model credential")
 	}
 	return string(b), err
 }
@@ -184,8 +202,19 @@ func (f *Files) Execute(ctx context.Context, call domain.ValidatedToolCall) (dom
 			return r, errors.New("patch conflict: expected old text does not occur exactly once")
 		}
 		next := strings.Replace(old, p.Before, p.After, 1)
+		if f.local != nil && containsProtectedText(next, f.local.secrets) {
+			return r, errors.New("write contains a protected model credential")
+		}
 		if len(next) > maxFileBytes || !f.generic && (len(next) > 8192 || !json.Valid([]byte(next))) {
 			return r, errors.New("patch must produce a small valid JSON rules file")
+		}
+		mode := os.FileMode(0600)
+		if f.local != nil {
+			info, err := f.root.Lstat(p.Path)
+			if err != nil || !info.Mode().IsRegular() {
+				return r, errors.New("patch target is no longer a regular file")
+			}
+			mode = info.Mode().Perm()
 		}
 		tempPath := path.Join(path.Dir(p.Path), ".patch-"+newID()+".tmp")
 		tmp, err := f.root.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
@@ -194,6 +223,9 @@ func (f *Files) Execute(ctx context.Context, call domain.ValidatedToolCall) (dom
 		}
 		defer f.root.Remove(tempPath)
 		_, err = tmp.WriteString(next)
+		if err == nil && f.local != nil {
+			err = tmp.Chmod(mode)
+		}
 		if err == nil {
 			err = tmp.Sync()
 		}
@@ -222,8 +254,15 @@ func (f *Files) Execute(ctx context.Context, call domain.ValidatedToolCall) (dom
 		if err != nil {
 			return r, err
 		}
-		if len(names) >= maxWorkspaceFiles {
+		limit := maxWorkspaceFiles
+		if f.local != nil {
+			limit = maxLocalFiles
+		}
+		if len(names) >= limit {
 			return r, errors.New("workspace file limit reached")
+		}
+		if f.local != nil && (f.localCheck(file.Path, true) != nil || containsProtectedText(file.Content, f.local.secrets)) {
+			return r, errors.New("invalid new file scope or content")
 		}
 		if err := writeUpload(f.root, file); err != nil {
 			return r, err
@@ -258,12 +297,19 @@ func (f *Files) Execute(ctx context.Context, call domain.ValidatedToolCall) (dom
 }
 
 func (f *Files) workspaceDefinitions() []domain.ToolDefinition {
-	return []domain.ToolDefinition{
+	definitions := []domain.ToolDefinition{
 		{Name: "list_files", Description: "List files explicitly uploaded or created in this session's isolated workspace.", Parameters: json.RawMessage(`{"type":"object","properties":{},"required":[],"additionalProperties":false}`)},
 		{Name: "read_file", Description: "Read an uploaded or created UTF-8 text file, up to 64 KiB, using its relative path.", Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}`)},
 		{Name: "apply_patch", Description: "Replace exact old text in a workspace file after approval. The old text must occur exactly once. No deletion.", Writes: true, Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"before":{"type":"string"},"after":{"type":"string"}},"required":["path","before","after"],"additionalProperties":false}`)},
 		{Name: "create_file", Description: "Create a new UTF-8 text file after approval; existing files cannot be overwritten. Maximum 64 KiB per file, 32 files.", Writes: true, Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"],"additionalProperties":false}`)},
 	}
+	if f.local != nil {
+		definitions[0].Description = "List permitted local workspace text files, excluding protected paths, dependencies, links and large files. Bounded to 2000 files and 20000 scanned entries."
+		definitions[1].Description = "Read a permitted local UTF-8 text file, up to 64 KiB, using its relative path. Credential files and links are protected."
+		definitions[2].Description = "Replace exact old text in a permitted local file according to configured write policy. Old text must occur exactly once. No deletion."
+		definitions[3].Description = "Create a permitted new local UTF-8 text file according to configured write policy; existing files cannot be overwritten. Maximum 64 KiB."
+	}
+	return definitions
 }
 
 func (f *Files) Test(ctx context.Context) ([]TestResult, error) {

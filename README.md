@@ -1,6 +1,6 @@
 # Agent Continue
 
-一个 **Go 编程工作台与原生会话迁移 CLI**。浏览器工作台支持模型对话、上传代码、审批文件修改、查看差异、保存和继续对话，以及独立用户访问。Go 可执行文件内嵌整个网页，运行不依赖 Node.js。
+一个 **Go AI CLI、编程工作台与原生会话迁移工具**。CLI 支持本地项目的单次任务、多轮对话和持久化接续；浏览器工作台支持模型对话、上传代码、审批文件修改、查看差异，以及独立用户访问。Go 可执行文件内嵌整个网页，运行不依赖 Node.js。
 
 Codex / DeepSeek Harness（DSH）原生会话迁移作为接续子功能保留，可在 CLI 或网页的“会话迁移”中使用。工作台默认采用暗色界面，右上角可切换浅色。
 
@@ -13,9 +13,9 @@ Codex / DeepSeek Harness（DSH）原生会话迁移作为接续子功能保留�
 | 浏览器工作台 | 模型流式对话、历史恢复、多轮继续、取消任务、上传文件、修改审批、差异查看及下载 |
 | 模型接口 | DeepSeek Chat Completions 与 OpenAI Responses 协议；管理员配置共享模型密钥，普通用户无法读取或修改密钥 |
 | 用户与安全 | 独立用户访问码、会话所有权检查、登录撤销、CSRF/XSS 防护、登录限流及资源限额 |
-| 文件工具 | 仅操作服务端为任务创建的独立文件目录；修改需审批，不执行任意 shell 命令 |
+| 文件工具 | 网页操作独立上传目录；CLI 操作配置允许的本地目录，提供列举、读取、精确替换和新建文件；默认只读，不执行任意 shell 命令 |
 | 规则测试 | 内置定价样例的四项规则测试；上传的任意项目尚无通用测试执行器 |
-| CLI | `inspect`、`migrate`、`install`、`serve`，以及 `config`、`models list`、`doctor`、`version`；独立 `chat`、`run`、`resume` 命令尚未提供 |
+| CLI | `chat`、`run`、`resume`、`sessions list/show/export`，以及迁移、服务、配置、模型列表和诊断命令 |
 | 部署 | 提供 Docker、systemd 和 HTTPS 代理模板；上传源码不代表已部署或验证目标服务器 |
 
 运行时保存任务和对话至 SQLite。服务重启后，进行中的任务标记为中断；待审批工具不会自动执行，未知结果须先核实。API Key 与对话未加密存储，应按安全文档保护数据目录。
@@ -59,6 +59,32 @@ Codex / DeepSeek Harness（DSH）原生会话迁移作为接续子功能保留�
 迁移页面的目标目录支持 Windows 与 Linux；服务器无需拥有该目录。迁移上传文件仅在请求内存中处理，不保存到任务会话库。迁移 Web 限制为上传 16 MiB、解压后 32 MiB、最多 100,000 条记录、JSON 深度 256 和整个会话 1,000,000 个 JSON token；更大文件使用本地 CLI。
 
 编程任务上传另有边界：最多 32 个 UTF-8 文件、单文件 64 KiB、合计 512 KiB；不接收二进制文件。
+
+## 本地 AI CLI
+
+先初始化配置，将工程目录登记到 `workspaceRoots`。模型密钥只通过配置的环境变量读取，不写入 CLI 会话库。以下使用 PowerShell；替换工程路径和可执行文件位置：
+
+```powershell
+.\dist\agent-continue.exe config init --cwd F:\my-project
+.\dist\agent-continue.exe config check
+.\dist\agent-continue.exe chat --cwd F:\my-project
+.\dist\agent-continue.exe run --cwd F:\my-project --prompt '检查代码并给出修改建议'
+.\dist\agent-continue.exe run --cwd F:\my-project --prompt '分析代码' --json
+.\dist\agent-continue.exe sessions list
+.\dist\agent-continue.exe resume <会话ID> --prompt '继续上一轮任务'
+```
+
+可用 `--config FILE` 选择配置；`--model MODEL` 选择当前配置协议支持的模型。`run` 必须提供 `--cwd`，可使用相对目录。省略 `--prompt` 时从标准输入读取，最大 8192 字节。`chat` 默认使用当前目录，每行发起一轮对话；`/new` 开始新会话，`/exit` 或 `/quit` 退出。交互终端里的 `resume ID` 不带提示时进入该会话的多轮对话；非交互或 `--json` 模式从标准输入读取一轮提示。
+
+`tools.mode` 默认 `readonly`。设为 `ask` 后，每次修改都显示路径与完整修改参数，只有输入 `y` 或 `yes` 才批准。没有交互终端或使用 `--json` 时，需要审批的写入立即拒绝。需要无人值守写入时，可明确配置 `allow` 和 `allowedTools`（`apply_patch`、`create_file`）；未列出的写工具仍拒绝。没有任意命令或通用测试执行功能。
+
+本地工具仅接受 UTF-8 文本，每个文件最大 64 KiB，目录扫描最多 20,000 条目、列出最多 2,000 文件。隐藏路径、凭据路径、数据库、运行数据目录、当前配置、依赖和构建目录、链接文件受到保护；包含当前模型密钥的文件也拒绝读取。配置路径不能通过链接访问；路径组件中的 `~`、末尾点或空格及 Windows 保留设备名也拒绝。文件名与已知密钥检查不能识别任意文件中的所有第三方秘密，敏感文件仍应移出工程的允许范围。
+
+会话保存在配置 `dataDir` 下的 `cli-v1`，与网页工作台隔离。网页端拒绝打开标记为 CLI 的数据库。`sessions show ID` 和 `sessions export ID` 将本地快照输出为 JSON；输出包含对话和工具结果，应作为私有数据处理。查询或导出不需要模型密钥；继续运行需要重新提供密钥，并重新验证工程仍在允许范围。中断的写操作不会自动重放。
+
+`--json` 输出逐行 JSON 事件，最终事件包含持久化运行结果、模型请求次数和实际工具执行次数。退出码：成功 `0`、失败 `1`、取消 `2`、配置限额 `3`。Ctrl+C 取消当前运行并保存结果。一个数据目录同时只允许一个进程使用；同一工程根目录的跨进程运行还会申请系统用户缓存目录内的文件锁。不同根目录存在父子关系时，只在同一服务实例内检查重叠，避免使用不同配置同时修改互相包含的工程。
+
+2026-10-05 本地 CLI 实测：Windows 全量 Go 测试、`go vet` 与 CLI / 任务 / 存储 / 模型 / HTTP 的 race 检查通过；这五个包的 Linux 测试也通过，包括配置链接拒绝和补丁保留可执行权限。Windows 与 Linux 二进制通过本地合成模型的 `run/chat/resume` 和离线导出测试，Linux 实际 SIGINT 验证了退出码 `2`、取消状态持久化与锁释放。Responses 接续有保留助手与加密推理上下文的合成测试；审批期间无键盘输入的超时、取消，以及密钥反射和终端控制字符有回归覆盖。未调用付费模型。
 
 ## 构建
 

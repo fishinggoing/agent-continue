@@ -22,8 +22,16 @@ agent-continue config show|check [--config FILE] [--model MODEL] [--endpoint URL
 agent-continue models list [--config FILE] [--model MODEL]
 agent-continue doctor [--config FILE]
 agent-continue version
+agent-continue run --cwd DIR [--prompt TEXT] [--config FILE] [--model MODEL] [--json]
+agent-continue chat [--cwd DIR] [--config FILE] [--model MODEL]
+agent-continue resume ID [--prompt TEXT] [--config FILE] [--model MODEL] [--json]
+agent-continue sessions list [--config FILE]
+agent-continue sessions show|export ID [--config FILE]
 Configuration precedence: flags > AGENT_CONTINUE_* environment > file > defaults.
-Model credentials are environment references; these commands make no model requests.`
+Model credentials are environment references. Run/resume read stdin if prompt is omitted.
+Chat: /new, /exit, /quit. Resume without prompt opens chat in an interactive terminal.
+JSON runs emit NDJSON events; approval-required writes are denied without a terminal.
+Local sessions live in dataDir/cli-v1 and are inaccessible to the web workbench.`
 
 var Version = "0.1.0-dev"
 var Commit = "unknown"
