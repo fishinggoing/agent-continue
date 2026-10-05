@@ -1,24 +1,89 @@
 <!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Agent Continue · 会话迁移</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="dark light">
+  <title>Agent Continue · 编程工作台</title>
+  <link rel="stylesheet" href="./style.css"><link rel="stylesheet" href="./chat.css"><link rel="stylesheet" href="./theme.css"><script src="./lucide.min.js" defer></script><script src="./theme.js" defer></script>
+  <script src="./marked.umd.js" defer></script><script src="./purify.min.js" defer></script>
+  <script src="./app.js" type="module"></script><script src="./migration.js" type="module"></script>
+</head>
 <body>
-<aside class="sidebar"><a class="brand" href="/" aria-label="Agent Continue 首页"><span class="brand-icon">a↗</span><span>agent<br><b>continue.</b></span></a><div class="nav-label">工作台</div><a class="nav active" href="#workspace"><span>⇄</span> 会话迁移 <span class="nav-dot"></span></a><a class="nav" href="#how"><span>⌘</span> 使用说明</a><div class="sidebar-foot"><span class="status-dot"></span>独立 Go 服务<br><small>上下文接续，从这里开始。</small></div></aside>
-<main>
-<header class="topbar"><span>工作台 <span class="slash">/</span> 会话迁移</span><details id="access"><summary>访问设置 <span>⌄</span></summary><div class="access-panel"><label for="token">服务访问令牌</label><input id="token" type="password" autocomplete="off" placeholder="本地服务可留空"><small>仅保存在当前页面内存中。</small></div></details></header>
-<section class="intro"><div class="eyebrow"><span></span>CONTEXT CONTINUITY</div><h1>换个工具，<em>继续工作。</em></h1><p>在 Codex 与 DeepSeek Harness 之间迁移会话。<br>检查可迁移内容，了解损失，再带走新的原生会话。</p><div class="intro-note"><span>↗</span><div>保留上下文的来处<small>每次转换均附带映射与损失报告</small></div></div></section>
-<section class="workspace" id="workspace">
-<div class="main-column"><section class="card upload-card"><div class="section-head"><h2><span class="step">01</span> 选择来源</h2><button id="demo" class="text-button" type="button">试用合成示例 ↗</button></div><p class="section-sub">上传一份本地会话文件，开始检查。</p>
-<label class="field-label" for="from">来源工具</label><select id="from"><option value="codex">Codex → DeepSeek Harness</option><option value="dsh">DeepSeek Harness → Codex</option></select>
-<label id="drop" class="dropzone" for="file"><span class="file-icon">↥</span><strong id="file-name">拖放会话文件到这里</strong><span id="file-meta">或点击选择文件</span><small>JSONL / JSONL.ZSTD · 最大 16 MiB；更大文件可用本地 CLI</small><input id="file" type="file" accept=".jsonl,.zstd" aria-label="选择会话文件"></label>
-<div class="upload-foot"><span>◈</span> 上传内容仅用于本次请求，不持久保存到服务器。</div></section>
-<section class="card"><div class="section-head"><h2><span class="step">02</span> 设置目标</h2><span id="target-badge" class="badge">DeepSeek Harness</span></div><p class="section-sub">填写最终接续工程所在的位置。</p>
-<label class="field-label" for="cwd">目标工程目录 <span>必填</span></label><input id="cwd" type="text" placeholder="例如 F:\my-project 或 /home/me/project" spellcheck="false"><p class="field-hint">这是你电脑或目标机器上的绝对路径，网页不会搬运工程文件。</p>
-<div id="codex-options" hidden><div class="field-row"><div><label class="field-label" for="cliVersion">Codex CLI 版本</label><input id="cliVersion" placeholder="运行 codex --version 查看"></div><div><label class="field-label" for="modelProvider">模型提供方</label><input id="modelProvider" placeholder="目标 Codex 的提供方标识"></div></div><div class="field-row"><div><label class="field-label" for="model">模型 <span>选填</span></label><input id="model" placeholder="模型名称"></div><div><label class="field-label" for="title">会话标题 <span>选填</span></label><input id="title" placeholder="Imported DSH conversation"></div></div></div>
-<div class="actions"><button id="inspect" type="button" class="button secondary" disabled>检查文件</button><button id="plan" type="button" class="button secondary" disabled>预览转换</button><button id="convert" type="button" class="button primary" disabled>转换并生成下载 <span>→</span></button></div><p id="status" role="status" aria-live="polite">选择文件后即可开始。合成示例无需真实会话。</p></section></div>
-<aside class="result-column"><section class="card report-card"><div class="section-head"><h2>迁移报告</h2><span id="report-status" class="badge neutral">等待检查</span></div><div id="empty-report"><div class="empty-symbol">⇄</div><h3>先看清，再迁移</h3><p>检查结果会显示在这里。<br>包括记录数量、未决工具操作<br>以及转换中无法保留的内容。</p></div><div id="report" hidden><div class="stats"><div><strong id="record-count">0</strong><span>来源记录</span></div><div><strong id="pending-count">0</strong><span>待核实操作</span></div></div><div class="report-section"><h3>内容损失 <span id="loss-count">0</span></h3><ul id="losses"></ul></div><div class="report-section"><h3>待核实操作</h3><ul id="pending"></ul></div><details class="raw-report"><summary>查看完整报告</summary><pre id="raw"></pre></details><button id="report-download" class="button secondary full" type="button">下载 JSON 报告 ↓</button></div></section>
-<section id="download-panel" class="card download-card" hidden><span class="eyebrow">READY TO CONTINUE</span><h2>转换产物已就绪</h2><p>下载后，在目标机器使用 Go CLI 导入。</p><button id="artifact-download" class="button primary full" type="button">下载原生会话 ↓</button><label class="field-label" for="home">本地目标 home 路径</label><input id="home" placeholder="填写已初始化的目标工具 home"><pre id="install-command"></pre><p class="field-hint">导入前先使用 --dry-run 检查。写入后仍需在目标工具中恢复验证。</p><details><summary>文件 SHA-256</summary><code id="sha"></code></details></section>
-<section class="tip"><span>i</span><div><strong>恢复之前，核实未完成操作</strong><p>转换不会执行历史工具或发起模型请求。结果未知的操作需要先核实实际状态。</p></div></section></aside>
-</section>
-<section id="how" class="how"><div><span class="eyebrow">HOW IT WORKS</span><h2>从文件到接续，三步完成。</h2></div><ol><li><b>01</b><strong>检查与转换</strong><p>上传会话，填写目标目录，查看损失与未决操作。</p></li><li><b>02</b><strong>下载并本地导入</strong><p>服务器生成原生产物；本地 CLI 将其写入目标工具的会话库。</p></li><li><b>03</b><strong>在目标工具中继续</strong><p>打开新会话，核实工程现场。转换完成不等于原生恢复验证通过。</p></li></ol></section>
-<footer><span>agent continue.</span><span>双向迁移 · 显式损失 · 不重放历史工具</span></footer>
-</main></body></html>
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <a class="brand" href="./" aria-label="Agent Continue"><i data-lucide="terminal-square"></i><span>Agent Continue<small>编程工作台</small></span></a>
+    <button id="new-session" class="new-button"><i data-lucide="plus"></i>新建任务</button>
+    <div class="sidebar-label"><span>最近会话</span><button id="refresh-sessions" class="icon-button" title="刷新会话" aria-label="刷新会话"><i data-lucide="refresh-cw"></i></button></div>
+    <div class="search-field"><i data-lucide="search" aria-hidden="true"></i><input id="session-search" class="session-search" type="search" placeholder="搜索会话" aria-label="搜索会话"></div>
+    <nav id="session-list" class="session-list" aria-label="会话列表"><p class="muted">尚无会话</p></nav>
+    <div class="sidebar-bottom">
+      <button id="open-migration" class="nav-button"><i data-lucide="arrow-right-left"></i>会话迁移</button>
+      <button id="open-settings" class="nav-button"><i data-lucide="settings-2"></i>模型与连接<span id="connection-dot" class="dot"></span></button>
+      <div class="account-row"><i data-lucide="user-round"></i><span id="current-user">未登录</span><button id="disconnect-button" class="icon-button" title="退出登录" aria-label="退出登录" hidden><i data-lucide="log-out"></i></button></div>
+      <div class="server-label"><i data-lucide="server"></i><span id="server-state">连接中</span><span class="version">v0.1</span></div>
+    </div>
+  </aside>
+  <div class="main-shell">
+    <header class="topbar">
+      <button id="menu-button" class="icon-button mobile-only" title="切换会话列表" aria-label="切换会话列表"><i data-lucide="panel-left"></i></button>
+      <div class="breadcrumb"><i data-lucide="folder-open"></i><span id="workspace-name">对话</span><span class="separator">/</span><strong id="task-title">新对话</strong></div>
+      <span id="task-status" class="badge">就绪</span>
+      <button id="toggle-theme" class="icon-button" type="button" title="切换到浅色" aria-label="切换到浅色"><i data-lucide="sun"></i></button>
+      <button id="export-session" class="icon-button" title="导出会话" aria-label="导出会话" disabled><i data-lucide="download"></i></button>
+    </header>
+    <div id="workspace-view" class="workbench">
+      <section class="conversation">
+        <div class="conversation-head"><div class="view-label"><i data-lucide="messages-square"></i>对话</div><span id="model-badge" class="model-badge">gpt-6.1-sol</span><button id="open-review" class="icon-button" title="文件与修改" aria-label="文件与修改"><i data-lucide="panel-right"></i></button></div>
+        <div id="chat-scroll" class="chat-scroll">
+          <div id="welcome" class="welcome">
+            <div class="welcome-icon"><i data-lucide="terminal-square"></i></div>
+            <h1>Agent Continue</h1><p class="welcome-subtitle" id="welcome-model">gpt-6.1-sol · xhigh</p>
+            <div class="prompt-suggestions"><button data-prompt="解释这段代码，指出可能的错误。"><i data-lucide="file-search"></i>解释代码</button><button data-prompt="帮我修复上传代码中的问题，并列出修改原因。"><i data-lucide="bug"></i>修复问题</button><button data-prompt="帮我把这个需求拆成具体的实现步骤。"><i data-lucide="list-checks"></i>梳理需求</button></div>
+          </div>
+          <div id="messages" class="messages" aria-live="polite"></div><div id="stream-message" class="stream-message" hidden></div>
+        </div>
+        <div id="approval-panel" class="approval-panel" hidden>
+          <div class="approval-title"><i data-lucide="shield-question"></i><strong>待审批 · 修改文件</strong><span class="badge warning">仅本次</span></div>
+          <code id="approval-path">pricing.json</code><pre id="approval-diff"></pre>
+          <div class="approval-actions"><button id="deny-approval" class="button secondary"><i data-lucide="x"></i>拒绝</button><button id="allow-approval" class="button primary"><i data-lucide="check"></i>允许本次修改</button></div>
+        </div>
+        <form id="composer" class="composer">
+          <div id="attachments" class="attachments" hidden></div><input id="code-files" type="file" multiple hidden aria-label="上传代码文件">
+          <label class="sr-only" for="prompt">任务或消息</label><textarea id="prompt" rows="3" placeholder="输入问题、需求或代码…" maxlength="8192"></textarea>
+          <div class="composer-toolbar"><button id="attach-files" class="icon-button" type="button" title="上传文本或代码文件" aria-label="上传文本或代码文件"><i data-lucide="paperclip"></i></button><div class="model-select"><i data-lucide="cpu"></i><select id="model-mode" aria-label="模型"><option value="hyperion">gpt-6.1-sol · xhigh</option><option value="deepseek">DeepSeek</option><option value="demo" hidden>固定演示</option></select></div><span class="permission-label" id="permission-label"><i data-lucide="shield-check"></i>写入需审批</span><button id="cancel-task" class="icon-button stop" type="button" title="停止任务" aria-label="停止任务" hidden><i data-lucide="square"></i></button><button id="send-message" class="send-button" title="发送任务" aria-label="发送任务"><i data-lucide="arrow-up"></i></button></div>
+        </form>
+        <footer class="conversation-foot"><span id="run-summary"></span><span id="stream-state">就绪</span></footer>
+      </section>
+      <aside class="review-pane" id="review-pane">
+        <div class="review-head"><span class="view-label"><i data-lucide="files"></i>文件与修改</span><button id="close-review" class="icon-button" title="关闭工程审阅" aria-label="关闭工程审阅"><i data-lucide="x"></i></button></div>
+        <div class="review-tabs" role="tablist"><button id="tab-files" role="tab" aria-selected="true" data-tab="files">文件</button><button id="tab-diff" role="tab" aria-selected="false" data-tab="diff">差异 <span id="diff-count">0</span></button><button id="tab-tests" role="tab" aria-selected="false" data-tab="tests">测试</button></div>
+        <div id="panel-files" class="review-body" role="tabpanel"><div id="file-list" class="file-list"><p class="empty-state">暂无文件</p></div><div class="code-header"><span id="selected-file">—</span><button id="download-file" class="icon-button" title="下载当前文件" aria-label="下载当前文件" disabled><i data-lucide="download"></i></button></div><pre id="file-content" class="code-view muted"></pre></div>
+        <div id="panel-diff" class="review-body" role="tabpanel" hidden><div class="diff-title"><span id="diff-file">—</span><span id="diff-stat" class="muted">无改动</span></div><div id="diff-content" class="diff-content"><p class="empty-state">暂无任务修改</p></div></div>
+        <div id="panel-tests" class="review-body" role="tabpanel" hidden><div class="test-header"><i data-lucide="flask-conical"></i><strong>规则测试</strong><span id="test-badge" class="badge">未运行</span></div><div id="test-content" class="test-content"><p class="empty-state">暂无测试结果</p></div></div>
+        <div class="activity-section"><div class="activity-head"><span class="view-label"><i data-lucide="activity"></i>运行记录</span><span id="event-count">0</span></div><div id="activity-list" class="activity-list"><p class="empty-state">暂无执行记录</p></div></div>
+        <div class="workspace-foot"><i data-lucide="lock-keyhole"></i>服务端独立工程<span id="workspace-id">—</span></div>
+      </aside>
+    </div>
+    <section id="migration-view" class="migration-view" hidden>
+      <div class="migration-head"><h1>会话迁移</h1><button id="close-migration" class="button secondary"><i data-lucide="arrow-left"></i>返回工作台</button></div>
+      <div class="migration-grid"><div><div class="section-head"><h2>来源会话</h2><button id="demo" class="button secondary"><i data-lucide="file-plus-2"></i>合成样例</button></div>
+        <label for="from">转换方向</label><select id="from"><option value="codex">Codex → DeepSeek Harness</option><option value="dsh">DeepSeek Harness → Codex</option></select>
+        <label id="drop" class="dropzone" for="file"><i data-lucide="upload"></i><strong id="file-name">选择会话文件</strong><span id="file-meta">JSONL / ZSTD · 最大 16 MiB</span><input id="file" type="file" accept=".jsonl,.zstd" aria-label="选择会话文件"></label>
+        <div class="section-head"><h2>目标设置</h2><span id="target-badge" class="badge">DeepSeek Harness</span></div><label for="cwd">目标工程绝对路径</label><input id="cwd" placeholder="/home/user/project 或 F:\project">
+        <div id="codex-options" hidden><label for="cliVersion">Codex CLI 版本</label><input id="cliVersion"><label for="modelProvider">模型提供方</label><input id="modelProvider"><label for="model">模型</label><input id="model"><label for="title">会话标题</label><input id="title"></div>
+        <div class="actions"><button id="inspect" class="button secondary" disabled><i data-lucide="scan-search"></i>检查</button><button id="plan" class="button secondary" disabled><i data-lucide="eye"></i>预览</button><button id="convert" class="button primary" disabled><i data-lucide="arrow-right-left"></i>转换</button></div><p id="status" role="status">尚未选择文件</p>
+      </div><div><div class="section-head"><h2>迁移报告</h2><span id="report-status" class="badge">等待检查</span></div><div id="empty-report" class="empty-state">暂无报告</div><div id="report" hidden><div class="stats"><div><strong id="record-count">0</strong>来源记录</div><div><strong id="pending-count">0</strong>待核实操作</div></div><h3>内容损失 <span id="loss-count">0</span></h3><ul id="losses"></ul><h3>待核实操作</h3><ul id="pending"></ul><details><summary>完整报告</summary><pre id="raw"></pre></details><button id="report-download" class="button secondary"><i data-lucide="download"></i>下载报告</button></div>
+        <div id="download-panel" hidden><h2>转换产物</h2><button id="artifact-download" class="button primary"><i data-lucide="download"></i>下载原生会话</button><label for="home">本地目标 home 路径</label><input id="home"><pre id="install-command"></pre><details><summary>SHA-256</summary><code id="sha"></code></details></div>
+      </div></div>
+    </section>
+  </div>
+</div>
+<dialog id="access" class="settings-dialog">
+  <form method="dialog"><div class="section-head"><h2>模型与连接</h2><button class="icon-button" title="关闭设置" aria-label="关闭设置"><i data-lucide="x"></i></button></div></form>
+  <label for="token">用户访问码</label><input id="token" type="password" autocomplete="off" placeholder="用户访问码"><button id="connect-button" class="button secondary"><i data-lucide="log-in"></i>登录</button><p id="connection-error" class="error" role="alert"></p>
+  <div class="setting-row"><span>模型状态</span><span id="model-ready" class="badge">待检查</span></div>
+  <fieldset id="model-settings" hidden><label for="setting-model">模型</label><select id="setting-model"><option value="gpt-6.1-sol">Hyperion · gpt-6.1-sol · xhigh</option><option value="deepseek-flash">DeepSeek · deepseek-flash</option><option value="deepseek-v4-pro">DeepSeek · deepseek-v4-pro</option></select><label for="model-key">API Key</label><input id="model-key" type="password" autocomplete="off" placeholder="已配置时留空保留原密钥"><button id="save-model" class="button primary"><i data-lucide="save"></i>保存并验证</button><p id="model-error" class="error" role="alert"></p><p id="model-check-state" class="muted" role="status"></p></fieldset>
+  <form id="user-management" hidden><div class="section-head"><h2>用户</h2></div><label for="new-user-name">用户名称</label><input id="new-user-name" maxlength="48" required autocomplete="off"><button id="create-user" class="button secondary" type="submit"><i data-lucide="user-plus"></i>创建用户</button><p id="user-error" class="error" role="alert"></p><div id="created-user" hidden><label for="created-user-token" id="created-user-name">新用户访问码</label><div class="user-token-row"><input id="created-user-token" type="password" readonly autocomplete="off"><span id="copy-user-token"></span></div></div><div id="user-list"></div></form>
+</dialog>
+<div id="notice" class="notice" role="status" hidden></div>
+</body>
+</html>

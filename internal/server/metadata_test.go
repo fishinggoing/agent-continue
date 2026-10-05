@@ -173,7 +173,7 @@ func metadataUpload(t *testing.T, handler http.Handler, filename string, fields 
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/api/convert", strings.NewReader(body.String()))
+	r := localTestRequest(http.MethodPost, "/api/convert", strings.NewReader(body.String()))
 	r.Header.Set("Content-Type", writer.FormDataContentType())
 	r.Header.Set("Authorization", "Bearer "+testToken)
 	w := httptest.NewRecorder()

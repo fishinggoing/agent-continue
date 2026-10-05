@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	ProtocolDeepSeek = "deepseek-chat-completions-v1"
-	MaxConfigBytes   = 1 << 20
+	ProtocolDeepSeek  = "deepseek-chat-completions-v1"
+	ProtocolResponses = "hyperion-responses-v1"
+	MaxConfigBytes    = 1 << 20
 )
 
 type Provider struct {
@@ -27,6 +28,7 @@ type Provider struct {
 	Protocol         string `json:"protocol"`
 	Endpoint         string `json:"endpoint"`
 	Model            string `json:"model"`
+	ReasoningEffort  string `json:"reasoningEffort,omitempty"`
 	CredentialEnv    string `json:"credentialEnv"`
 	TimeoutSeconds   int    `json:"timeoutSeconds"`
 	MaxRetries       int    `json:"maxRetries"`
@@ -204,22 +206,30 @@ func Validate(c Config) error {
 	if c.Version != domain.SchemaVersion {
 		return bad("version", "unsupported or missing schema version; expected 1")
 	}
-	if c.Provider.ID != "deepseek" {
-		return bad("provider.id", "only deepseek is implemented")
+	if c.Provider.ID != "deepseek" && c.Provider.ID != "hyperion" {
+		return bad("provider.id", "expected deepseek or hyperion")
 	}
-	if c.Provider.Protocol != ProtocolDeepSeek {
+	responses := c.Provider.ID == "hyperion"
+	if !responses && c.Provider.Protocol != ProtocolDeepSeek || responses && c.Provider.Protocol != ProtocolResponses {
 		return bad("provider.protocol", "unsupported protocol")
 	}
 	u, err := url.Parse(c.Provider.Endpoint)
-	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" || u.Path != "/chat/completions" && u.Path != "/v1/chat/completions" {
-		return bad("provider.endpoint", "use a full /chat/completions URL without credentials, query or fragment")
+	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.Opaque != "" {
+		return bad("provider.endpoint", "use a full endpoint URL without credentials, query or fragment")
+	}
+	if responses && u.Path != "/v1/responses" || !responses && u.Path != "/chat/completions" && u.Path != "/v1/chat/completions" {
+		return bad("provider.endpoint", "endpoint path does not match the selected protocol")
 	}
 	ip := net.ParseIP(u.Hostname())
 	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || ip != nil && ip.IsLoopback())) {
 		return bad("provider.endpoint", "HTTPS is required; HTTP is allowed only for loopback protocol tests")
 	}
-	if c.Provider.Model != "deepseek-flash" && c.Provider.Model != "deepseek-v4-pro" {
-		return bad("provider.model", "unsupported model; expected deepseek-flash or deepseek-v4-pro")
+	if responses {
+		if c.Provider.Model != "gpt-6.1-sol" || c.Provider.ReasoningEffort != "xhigh" {
+			return bad("provider.model", "Hyperion requires gpt-6.1-sol with xhigh reasoning")
+		}
+	} else if c.Provider.Model != "deepseek-flash" && c.Provider.Model != "deepseek-v4-pro" {
+		return bad("provider.model", "unsupported DeepSeek model")
 	}
 	if !envName.MatchString(c.Provider.CredentialEnv) || strings.EqualFold(c.Provider.CredentialEnv, "AGENT_CONTINUE_TOKEN") {
 		return bad("provider.credentialEnv", "use a separate model credential environment variable")

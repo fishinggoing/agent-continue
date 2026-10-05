@@ -1,0 +1,6 @@
+[Unit]
+Description=Renew Agent Continue IP certificate
+
+[Service]
+Type=oneshot
+ExecStart=/opt/agent-continue-certbot/bin/certbot renew --cert-name agent-continue-ip --quiet --deploy-hook "systemctl reload nginx"

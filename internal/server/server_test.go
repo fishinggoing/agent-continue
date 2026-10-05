@@ -17,6 +17,13 @@ import (
 
 const testToken = "synthetic-server-access-token"
 
+func localTestRequest(method, path string, body io.Reader) *http.Request {
+	r := httptest.NewRequest(method, path, body)
+	r.RemoteAddr = "127.0.0.1:12345"
+	r.Host = "localhost"
+	return r
+}
+
 func upload(t *testing.T, handler http.Handler, endpoint string, fields map[string]string, data []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer
@@ -36,7 +43,7 @@ func upload(t *testing.T, handler http.Handler, endpoint string, fields map[stri
 	if err = writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest("POST", endpoint, &body)
+	r := localTestRequest("POST", endpoint, &body)
 	r.Header.Set("Content-Type", writer.FormDataContentType())
 	r.Header.Set("Authorization", "Bearer "+testToken)
 	w := httptest.NewRecorder()
@@ -46,7 +53,7 @@ func upload(t *testing.T, handler http.Handler, endpoint string, fields map[stri
 
 func demoData(t *testing.T, handler http.Handler) []byte {
 	t.Helper()
-	r := httptest.NewRequest("GET", "/api/demo", nil)
+	r := localTestRequest("GET", "/api/demo", nil)
 	r.Header.Set("Authorization", "Bearer "+testToken)
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
@@ -69,10 +76,10 @@ func TestAuthenticationOriginsAndStaticAssets(t *testing.T) {
 		{"/api/demo", "invalid", "", "", 401},
 		{"/api/demo", testToken, "https://other.example", "", 403},
 		{"/api/demo", testToken, "", "cross-site", 403},
-		{"/api/demo", testToken, "http://example.com", "same-origin", 200},
+		{"/api/demo", testToken, "http://localhost", "same-origin", 200},
 		{"/server.go", "", "", "", 404},
 	} {
-		r := httptest.NewRequest("GET", c.path, nil)
+		r := localTestRequest("GET", c.path, nil)
 		if c.token != "" {
 			r.Header.Set("Authorization", "Bearer "+c.token)
 		}

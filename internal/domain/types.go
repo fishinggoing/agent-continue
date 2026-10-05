@@ -80,13 +80,14 @@ type ContentPart struct {
 }
 
 type Message struct {
-	ID         string        `json:"id"`
-	Role       Role          `json:"role"`
-	Content    []ContentPart `json:"content"`
-	Source     string        `json:"source"`
-	OriginalID string        `json:"originalId,omitempty"`
-	ToolCalls  []ToolCall    `json:"toolCalls,omitempty"`
-	ToolCallID string        `json:"toolCallId,omitempty"`
+	ID             string          `json:"id"`
+	Role           Role            `json:"role"`
+	Content        []ContentPart   `json:"content"`
+	Source         string          `json:"source"`
+	OriginalID     string          `json:"originalId,omitempty"`
+	ToolCalls      []ToolCall      `json:"toolCalls,omitempty"`
+	ToolCallID     string          `json:"toolCallId,omitempty"`
+	ProviderOutput json.RawMessage `json:"providerOutput,omitempty"`
 }
 
 // Arguments are complete JSON, but still untrusted until ToolRegistry.Validate.
@@ -227,12 +228,13 @@ type ModelRequest struct {
 }
 
 type ModelResponse struct {
-	Text         string     `json:"text"`
-	ToolCalls    []ToolCall `json:"toolCalls,omitempty"`
-	Usage        Usage      `json:"usage"`
-	FinishReason string     `json:"finishReason"`
-	Requests     int        `json:"requests"`
-	Complete     bool       `json:"complete"`
+	Text           string          `json:"text"`
+	ToolCalls      []ToolCall      `json:"toolCalls,omitempty"`
+	Usage          Usage           `json:"usage"`
+	FinishReason   string          `json:"finishReason"`
+	Requests       int             `json:"requests"`
+	Complete       bool            `json:"complete"`
+	ProviderOutput json.RawMessage `json:"providerOutput,omitempty"`
 }
 
 type Provider interface {

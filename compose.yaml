@@ -7,9 +7,16 @@ services:
     environment:
       AGENT_CONTINUE_TOKEN: ${AGENT_CONTINUE_TOKEN:?Set a private token of at least 24 characters}
       TZ: ${TZ:-Asia/Shanghai}
+      AGENT_CONTINUE_DATA_DIR: /var/lib/agent-continue
+      # Set only the actual proxy peer CIDR (the host gateway for a host proxy).
+      AGENT_CONTINUE_TRUSTED_PROXIES: ${AGENT_CONTINUE_TRUSTED_PROXIES:-}
+    volumes:
+      - workbench-data:/var/lib/agent-continue
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 2g
     cpus: 2
     pids_limit: 64
+volumes:
+  workbench-data:

@@ -3,8 +3,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"embed"
 	"encoding/base64"
 	"encoding/json"
@@ -13,37 +11,59 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/fishinggoing/agent-continue/internal/app"
 	"github.com/fishinggoing/agent-continue/internal/migrate"
+	"github.com/fishinggoing/agent-continue/internal/task"
 )
 
 //go:embed web/*
 var assets embed.FS
 
 type Server struct {
-	token string
-	slots chan struct{}
+	token    string
+	slots    chan struct{}
+	tasks    *task.Service
+	options  Options
+	security *securityState
+	requests chan struct{}
 }
 
 func New(token string) http.Handler {
-	s := &Server{token: token, slots: make(chan struct{}, 2)}
+	return NewWithTasks(token, nil)
+}
+
+func NewWithTasks(token string, tasks *task.Service) http.Handler {
+	return NewWithOptions(token, tasks, Options{})
+}
+
+func NewWithOptions(token string, tasks *task.Service, options Options) http.Handler {
+	s := &Server{token: token, slots: make(chan struct{}, 2), tasks: tasks, options: options, security: newSecurityState(), requests: make(chan struct{}, 64)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { respond(w, 200, map[string]any{"status": "ok"}) })
 	mux.HandleFunc("POST /api/inspect", s.api)
 	mux.HandleFunc("POST /api/plan", s.api)
 	mux.HandleFunc("POST /api/convert", s.api)
 	mux.HandleFunc("GET /api/demo", s.demo)
+	mux.HandleFunc("POST /api/connect", s.connect)
+	mux.HandleFunc("POST /api/disconnect", s.disconnect)
+	if tasks != nil {
+		mux.HandleFunc("POST /api/users", s.createUser)
+		mux.HandleFunc("GET /api/users", s.listUsers)
+		mux.HandleFunc("DELETE /api/users/{id}", s.revokeUser)
+		s.registerTasks(mux)
+	}
 	files, _ := fs.Sub(assets, "web")
 	static := http.FileServer(http.FS(files))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/app.js" && r.URL.Path != "/style.css" && r.URL.Path != "/lucide.min.js" {
+		allowed := map[string]bool{"/": true, "/app.js": true, "/migration.js": true, "/style.css": true, "/chat.css": true, "/theme.css": true, "/theme.js": true, "/lucide.min.js": true, "/marked.umd.js": true, "/purify.min.js": true, "/marked-LICENSE.txt": true, "/purify-LICENSE.txt": true}
+		if !allowed[r.URL.Path] {
 			http.NotFound(w, r)
 			return
 		}
@@ -54,26 +74,39 @@ func New(token string) http.Handler {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+		if !s.allowRequest(w, r) {
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
-			if origin := r.Header.Get("Origin"); origin != "" {
-				u, e := url.Parse(origin)
-				if e != nil || u.Host != r.Host || (u.Scheme != "http" && u.Scheme != "https") {
-					failure(w, 403, "Cross-origin requests are not allowed")
-					return
-				}
-			}
-			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
-				failure(w, 403, "Cross-site requests are not allowed")
+			select {
+			case s.requests <- struct{}{}:
+				defer func() { <-s.requests }()
+			default:
+				failure(w, 429, "Too many concurrent requests; retry later")
 				return
 			}
-			if s.token != "" {
-				provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-				a, b := sha256.Sum256([]byte(provided)), sha256.Sum256([]byte(s.token))
-				if subtle.ConstantTimeCompare(a[:], b[:]) != 1 {
+			if r.URL.Path != "/api/connect" && r.URL.Path != "/api/disconnect" {
+				user, login, ok := s.authenticate(r)
+				if !ok {
+					if !s.allowLogin(r) {
+						w.Header().Set("Retry-After", "60")
+						failure(w, 429, "Too many authentication attempts; retry in one minute")
+						return
+					}
 					failure(w, 401, "Access token is required or invalid")
 					return
 				}
+				ctx := r.Context()
+				if login != nil {
+					var cancel context.CancelFunc
+					ctx, cancel = context.WithDeadline(ctx, login.expires)
+					stop := context.AfterFunc(login.ctx, cancel)
+					defer cancel()
+					defer stop()
+				}
+				r = r.WithContext(context.WithValue(ctx, userContextKey{}, user))
 			}
 		}
 		mux.ServeHTTP(w, r)
@@ -203,7 +236,27 @@ func Run(listen, token string) error {
 	if host != "localhost" && (ip == nil || !ip.IsLoopback()) && len(token) < 24 {
 		return fmt.Errorf("Non-loopback listeners require AGENT_CONTINUE_TOKEN with at least 24 characters")
 	}
-	srv := &http.Server{Addr: listen, Handler: New(token), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20}
+	if token != "" && (len(token) < 24 || len(token) > 256 || strings.ContainsAny(token, " \t\r\n\x00")) {
+		return fmt.Errorf("AGENT_CONTINUE_TOKEN must contain 24..256 characters without whitespace")
+	}
+	options, e := proxyOptions(os.Getenv("AGENT_CONTINUE_TRUSTED_PROXIES"))
+	if e != nil {
+		return e
+	}
+	dataDir := os.Getenv("AGENT_CONTINUE_DATA_DIR")
+	if dataDir == "" {
+		base, err := os.UserConfigDir()
+		if err != nil {
+			return err
+		}
+		dataDir = filepath.Join(base, "agent-continue", "workbench")
+	}
+	tasks, e := task.Open(dataDir)
+	if e != nil {
+		return e
+	}
+	defer tasks.Close()
+	srv := &http.Server{Addr: listen, Handler: NewWithOptions(token, tasks, options), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 90 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10}
 	listener, e := net.Listen("tcp", listen)
 	if e != nil {
 		return e

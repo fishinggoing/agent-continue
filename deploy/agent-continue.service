@@ -1,5 +1,5 @@
 [Unit]
-Description=Agent Continue session migration web service
+Description=Agent Continue programming workbench
 After=network.target
 
 [Service]
@@ -8,6 +8,11 @@ User=agent-continue
 Group=agent-continue
 WorkingDirectory=/opt/agent-continue
 EnvironmentFile=/etc/agent-continue.env
+Environment=AGENT_CONTINUE_DATA_DIR=/var/lib/agent-continue
+Environment=AGENT_CONTINUE_TRUSTED_PROXIES=127.0.0.1/32,::1/128
+StateDirectory=agent-continue
+StateDirectoryMode=0700
+UMask=0077
 ExecStart=/opt/agent-continue/agent-continue serve --listen 127.0.0.1:8080
 Restart=on-failure
 RestartSec=3

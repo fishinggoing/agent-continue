@@ -62,6 +62,9 @@ func New(c config.Config, env config.LookupEnv) (*Client, error) {
 	if err := config.Validate(c); err != nil {
 		return nil, err
 	}
+	if c.Provider.Protocol != config.ProtocolDeepSeek {
+		return nil, &Error{Kind: Unsupported}
+	}
 	key, err := config.Credential(c.Provider, env)
 	if err != nil {
 		return nil, err
@@ -78,6 +81,9 @@ func (c *Client) Close() { c.http.CloseIdleConnections() }
 
 func Models(p config.Provider) []domain.Model {
 	result := []domain.Model{}
+	if p.ID == "hyperion" {
+		return []domain.Model{{Provider: "hyperion", ID: "gpt-6.1-sol", Configured: true, Tools: true, Streaming: true}}
+	}
 	for _, id := range []string{"deepseek-flash", "deepseek-v4-pro"} {
 		result = append(result, domain.Model{Provider: "deepseek", ID: id, Configured: id == p.Model, Tools: true, Streaming: true})
 	}

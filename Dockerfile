@@ -8,6 +8,8 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /agent-continue ./cmd/a
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 agent
+RUN mkdir -p /var/lib/agent-continue && chmod 0700 /var/lib/agent-continue && chown agent:agent /var/lib/agent-continue
+ENV AGENT_CONTINUE_DATA_DIR=/var/lib/agent-continue
 COPY --from=build /agent-continue /usr/local/bin/agent-continue
 USER agent
 EXPOSE 8080
